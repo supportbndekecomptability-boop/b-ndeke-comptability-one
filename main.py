@@ -5,9 +5,8 @@ import sys
 from database import init_database
 from core.utilisateurs import creer_admin_par_defaut, authentifier
 from core.licence import licence_est_valide
-from core.session import charger_session, supprimer_session, sauvegarder_session
+from core.session import charger_session, sauvegarder_session
 from core.updater import verifier_mise_a_jour
-from ui.login import LoginWindow
 from ui.dashboard import DashboardWindow
 from ui.activation_ui import ActivationWindow
 from ui.update_ui import UpdateWindow
@@ -38,10 +37,6 @@ def _verifier_licence():
 
 
 def _verifier_mise_a_jour():
-    """
-    Verifie les mises a jour.
-    Retourne True si l'appli peut continuer, False si l'utilisateur doit quitter.
-    """
     maj = verifier_mise_a_jour()
 
     if not maj["ok"]:
@@ -65,15 +60,32 @@ def _verifier_mise_a_jour():
     return True
 
 
-def _ouvrir_dashboard(utilisateur):
-    """
-    Ouvre le dashboard pour un utilisateur donne.
-    Retourne True si l'utilisateur a clique sur 'Se deconnecter',
-    False s'il a ferme la fenetre par la croix.
-    """
-    dashboard = DashboardWindow(utilisateur)
-    dashboard.mainloop()
-    return getattr(dashboard, "deconnexion_demandee", False)
+def _sauvegarde_cloud_si_besoin():
+    """Envoie une sauvegarde cloud si active et derniere > 24h."""
+    try:
+        from core.backup_cloud import (
+            sauvegarde_cloud_active, sauvegarder_dans_cloud,
+        )
+        from core.parametres import get_parametre
+        from datetime import datetime, timedelta
+
+        if not sauvegarde_cloud_active():
+            return
+
+        derniere = get_parametre("derniere_backup_cloud")
+        if derniere:
+            try:
+                dt = datetime.strptime(derniere, "%d/%m/%Y %H:%M")
+                if datetime.now() - dt < timedelta(hours=23):
+                    return
+            except Exception:
+                pass
+
+        print("[BACKUP] Envoi de la sauvegarde cloud...")
+        ok, msg = sauvegarder_dans_cloud()
+        print(f"[BACKUP] {msg}")
+    except Exception as e:
+        print(f"[BACKUP] Ignore : {e}")
 
 
 def main():
@@ -92,41 +104,32 @@ def main():
     # 3. Creer un admin par defaut si aucun utilisateur n'existe
     creer_admin_par_defaut()
 
-    # 3.5 Verifier les mises a jour
+    # 4. Verifier les mises a jour
     if not _verifier_mise_a_jour():
         return
 
-    # 4. Si l'app vient d'etre activee -> AUTO-LOGIN avec l'admin
-    if just_activated:
-        print("[INFO] Activation reussie. Connexion automatique...")
+    # 5. Sauvegarde cloud silencieuse (si active)
+    _sauvegarde_cloud_si_besoin()
+
+    # 6. AUTO-LOGIN (plus jamais de fenetre de connexion)
+    utilisateur = charger_session()
+
+    if not utilisateur:
+        print("[INFO] Aucune session active. Connexion admin par defaut...")
         utilisateur = authentifier("admin@bndeke.com", "admin123")
         if utilisateur:
             sauvegarder_session(utilisateur)
-            deconnexion = _ouvrir_dashboard(utilisateur)
-            if not deconnexion:
-                return
         else:
+            print("[ERREUR] Impossible de se connecter. Fermeture.")
             return
 
-    # 5. Reconnexion auto via session persistante
-    utilisateur = charger_session()
-    if utilisateur:
-        print(f"[SESSION] Reconnexion automatique : {utilisateur['email']}")
-        deconnexion = _ouvrir_dashboard(utilisateur)
-        if not deconnexion:
-            return
+    # 7. Ouvrir le dashboard
+    print(f"[SESSION] Connexion : {utilisateur.get('email', 'inconnu')}")
+    dashboard = DashboardWindow(utilisateur)
+    dashboard.mainloop()
 
-    # 6. Boucle login normale
-    while True:
-        login = LoginWindow()
-        login.mainloop()
-
-        if login.utilisateur_connecte is None:
-            break
-
-        deconnexion = _ouvrir_dashboard(login.utilisateur_connecte)
-        if not deconnexion:
-            break
+    # 8. Fin de l'application
+    print("[INFO] Application fermee.")
 
 
 if __name__ == "__main__":

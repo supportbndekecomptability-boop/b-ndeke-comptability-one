@@ -60,16 +60,15 @@ def lister_avances(personnel_id=None, seulement_en_cours=False):
         params.append(personnel_id)
 
     if seulement_en_cours:
-        base += " AND a.montant > a.montant_deduit"
+        base += " AND a.montant > COALESCE(a.montant_deduit, 0)"
 
     base += " ORDER BY a.date_avance DESC, a.id DESC"
 
     cursor.execute(base, params)
     rows = [dict(r) for r in cursor.fetchall()]
 
-    # Calculer le reste
     for r in rows:
-        r["reste"] = r["montant"] - r["montant_deduit"]
+        r["reste"] = r["montant"] - (r["montant_deduit"] or 0)
         r["en_cours"] = r["reste"] > 0.01
 
     conn.close()

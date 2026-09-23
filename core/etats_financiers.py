@@ -93,19 +93,89 @@ MAPPING_PERSONNEL = {
 
 
 # ============================================================
+# MAPPING BILAN INITIAL -> SYSCOHADA
+# ============================================================
+MAPPING_ACTIF_INITIAL = {
+    "20": "201", "21": "211", "22": "221", "23": "231", "24": "244",
+    "25": "245", "26": "261", "27": "271", "28": "281",
+    "31": "311", "32": "321", "33": "331",
+    "41": "411", "42": "421", "43": "431", "44": "447",
+    "45": "451", "46": "461", "47": "471",
+    "51": "511", "52": "521", "53": "531", "57": "571", "58": "581",
+}
+
+MAPPING_PASSIF_INITIAL = {
+    "10": "101", "11": "106", "12": "110", "13": "130", "14": "141",
+    "15": "151", "16": "162", "17": "171", "18": "181", "19": "191",
+    "40": "401", "42": "422", "43": "431", "44": "447",
+    "45": "451", "46": "461",
+}
+
+# Completion du plan comptable
+PLAN_COMPTABLE.update({
+    "201": "Immobilisations incorporelles",
+    "211": "Immobilisations corporelles",
+    "221": "Terrains",
+    "261": "Titres de participation",
+    "271": "Autres immobilisations financieres",
+    "281": "Amortissements",
+    "311": "Matieres premieres",
+    "321": "Autres approvisionnements",
+    "331": "Autres stocks",
+    "451": "Autres debiteurs",
+    "461": "Creances diverses",
+    "471": "Comptes transitoires",
+    "511": "Titres de placement",
+    "581": "Regies d'avances",
+    "141": "Subventions d'investissement",
+    "151": "Provisions reglementees",
+    "171": "Dettes de credit-bail",
+    "181": "Dettes liees a des participations",
+    "191": "Provisions pour risques",
+    "111": "Reserves",
+    "121": "Report a nouveau",
+})
+
+
+def _charger_bilan_initial():
+    """Charge le bilan initial et le convertit en codes SYSCOHADA.
+    Retourne (actif_init, passif_init) : dicts {code_syscohada: montant}
+    """
+    try:
+        from core.bilan_initial import get_bilan_initial
+        data = get_bilan_initial()
+
+        actif = {}
+        for code, montant in data.get("actif", {}).items():
+            code_sc = MAPPING_ACTIF_INITIAL.get(str(code))
+            if not code_sc:
+                code_sc = str(code) + "1"
+            actif[code_sc] = float(montant)
+
+        passif = {}
+        for code, montant in data.get("passif", {}).items():
+            code_sc = MAPPING_PASSIF_INITIAL.get(str(code))
+            if not code_sc:
+                code_sc = str(code) + "1"
+            passif[code_sc] = float(montant)
+
+        return actif, passif
+    except Exception as e:
+        print(f"[BILAN] Chargement bilan initial ignore : {e}")
+        return {}, {}
+
+
+# ============================================================
 # COLLECTE DES ECRITURES
 # ============================================================
 def _collecter_ecritures(date_debut=None, date_fin=None):
-    """
-    Recupere toutes les operations de l'ecole et les convertit
-    en ecritures comptables SYSCOHADA.
-    """
+    """Recupere toutes les operations de l'ecole et les convertit
+    en ecritures comptables SYSCOHADA."""
     conn = get_connection()
     cursor = conn.cursor()
 
     ecritures = []
 
-    # Filtres de date
     filtre_eleves = ""
     filtre_personnel = ""
     filtre_depenses = ""
@@ -161,7 +231,7 @@ def _collecter_ecritures(date_debut=None, date_fin=None):
             ]
         })
 
-    # ===== PAIEMENTS PERSONNEL (avec split avance) =====
+    # ===== PAIEMENTS PERSONNEL =====
     cursor.execute(f"""
         SELECT p.numero_paie, p.date_paiement, p.montant, p.motif, p.mode_paiement,
                COALESCE(p.montant_avance_deduit, 0) as montant_avance_deduit,
@@ -181,16 +251,13 @@ def _collecter_ecritures(date_debut=None, date_fin=None):
         montant_deduit = row["montant_avance_deduit"] or 0
         montant_net = montant_total - montant_deduit
 
-        # Ecriture : charge totale (debit 661)
         lignes = [
             {"compte": compte_charge, "debit": montant_total, "credit": 0},
         ]
 
-        # Deduction d'avance : credite 421 (recuperation de la creance)
         if montant_deduit > 0.01:
             lignes.append({"compte": "421", "debit": 0, "credit": montant_deduit})
 
-        # Net verse en tresorerie
         if montant_net > 0.01:
             lignes.append({"compte": compte_tresorerie, "debit": 0, "credit": montant_net})
 
@@ -257,7 +324,6 @@ def _collecter_ecritures(date_debut=None, date_fin=None):
 
 
 def _compte_tresorerie(mode_paiement):
-    """Determine le compte de tresorerie selon le mode"""
     if "esp" in mode_paiement.lower():
         return "571"
     elif "banque" in mode_paiement.lower() or "virement" in mode_paiement.lower():
@@ -274,7 +340,6 @@ def _compte_tresorerie(mode_paiement):
 # 1. JOURNAL GENERAL
 # ============================================================
 def etat_journal(date_debut=None, date_fin=None):
-    """Retourne le journal general chronologique"""
     ecritures = _collecter_ecritures(date_debut, date_fin)
 
     lignes = []
@@ -308,7 +373,6 @@ def etat_journal(date_debut=None, date_fin=None):
 # 2. GRAND LIVRE
 # ============================================================
 def etat_grand_livre(date_debut=None, date_fin=None):
-    """Retourne le grand livre (detail par compte)"""
     ecritures = _collecter_ecritures(date_debut, date_fin)
 
     comptes = {}
@@ -357,7 +421,6 @@ def etat_grand_livre(date_debut=None, date_fin=None):
 # 3. BALANCE GENERALE
 # ============================================================
 def etat_balance(date_debut=None, date_fin=None):
-    """Retourne la balance generale a 6 colonnes"""
     ecritures = _collecter_ecritures(date_debut, date_fin)
 
     comptes = {}
@@ -410,7 +473,6 @@ def etat_balance(date_debut=None, date_fin=None):
 # 4. COMPTE DE RESULTAT
 # ============================================================
 def etat_compte_resultat(date_debut=None, date_fin=None):
-    """Compte de resultat simplifie SYSCOHADA"""
     ecritures = _collecter_ecritures(date_debut, date_fin)
 
     produits = {}
@@ -456,36 +518,66 @@ def etat_compte_resultat(date_debut=None, date_fin=None):
 
 
 # ============================================================
-# 5. BILAN SIMPLIFIE
+# 5. BILAN SIMPLIFIE (avec integration du bilan initial)
 # ============================================================
 def etat_bilan(date_debut=None, date_fin=None):
-    """Bilan simplifie (Actif / Passif) selon SYSCOHADA"""
+    """
+    Bilan simplifie (Actif / Passif) selon SYSCOHADA.
+    Integre automatiquement le bilan initial saisi dans les Parametres.
+    """
     ecritures = _collecter_ecritures(date_debut, date_fin)
 
-    comptes = {}
+    # ===== MOUVEMENTS DE LA PERIODE =====
+    comptes_mvt = {}
     for e in ecritures:
         for ligne in e["lignes"]:
             c = ligne["compte"]
-            if c not in comptes:
-                comptes[c] = {"debit": 0, "credit": 0}
-            comptes[c]["debit"] += ligne["debit"]
-            comptes[c]["credit"] += ligne["credit"]
+            if c not in comptes_mvt:
+                comptes_mvt[c] = {"debit": 0, "credit": 0}
+            comptes_mvt[c]["debit"] += ligne["debit"]
+            comptes_mvt[c]["credit"] += ligne["credit"]
 
-    # Calcul du resultat
+    # ===== BILAN INITIAL =====
+    actif_init, passif_init = _charger_bilan_initial()
+
+    # Unifier
+    comptes = {}
+
+    for c, v in comptes_mvt.items():
+        comptes[c] = {
+            "debit": v["debit"],
+            "credit": v["credit"],
+            "initial": 0,
+            "mvt": v["debit"] - v["credit"],
+        }
+
+    for c, montant in actif_init.items():
+        if c not in comptes:
+            comptes[c] = {"debit": 0, "credit": 0, "initial": 0, "mvt": 0}
+        comptes[c]["debit"] += montant
+        comptes[c]["initial"] += montant
+
+    for c, montant in passif_init.items():
+        if c not in comptes:
+            comptes[c] = {"debit": 0, "credit": 0, "initial": 0, "mvt": 0}
+        comptes[c]["credit"] += montant
+        comptes[c]["initial"] -= montant
+
+    # ===== RESULTAT DE L'EXERCICE =====
     total_produits = sum(
         v["credit"] - v["debit"]
-        for k, v in comptes.items() if k.startswith("7")
+        for k, v in comptes_mvt.items() if k.startswith("7")
     )
     total_charges = sum(
         v["debit"] - v["credit"]
-        for k, v in comptes.items() if k.startswith("6")
+        for k, v in comptes_mvt.items() if k.startswith("6")
     )
     resultat = total_produits - total_charges
 
     # ===== ACTIF =====
     actif = []
 
-    # Classe 2 : Immobilisations
+    # Classe 2
     for c in sorted(comptes):
         if c.startswith("2"):
             solde = comptes[c]["debit"] - comptes[c]["credit"]
@@ -494,27 +586,37 @@ def etat_bilan(date_debut=None, date_fin=None):
                     "compte": c,
                     "intitule": PLAN_COMPTABLE.get(c, "Autre"),
                     "montant": solde,
+                    "initial": comptes[c].get("initial", 0),
+                    "mouvements": comptes[c].get("mvt", 0),
                 })
 
-    # 411 Eleves (a recevoir) - impayes
+    # 411 Eleves
     eleves_a_recevoir = _calculer_impayes()
     if eleves_a_recevoir > 0.01:
+        init_411 = actif_init.get("411", 0)
+        mvt_411 = eleves_a_recevoir - init_411 if init_411 else eleves_a_recevoir
         actif.append({
             "compte": "411",
             "intitule": "Eleves (a recevoir)",
             "montant": eleves_a_recevoir,
+            "initial": init_411,
+            "mouvements": mvt_411,
         })
 
-    # 421 Personnel - Avances versees (creance sur les employes)
+    # 421 Personnel - Avances
     avances_en_cours = _calculer_avances_en_cours()
     if avances_en_cours > 0.01:
+        init_421 = actif_init.get("421", 0)
+        mvt_421 = avances_en_cours - init_421 if init_421 else avances_en_cours
         actif.append({
             "compte": "421",
             "intitule": "Personnel - Avances versees",
             "montant": avances_en_cours,
+            "initial": init_421,
+            "mouvements": mvt_421,
         })
 
-    # Autres creances (classe 4 debitrice, hors 411 et 421)
+    # Autres creances classe 4
     for c in sorted(comptes):
         if c.startswith("4") and c not in ("411", "421"):
             solde = comptes[c]["debit"] - comptes[c]["credit"]
@@ -523,10 +625,11 @@ def etat_bilan(date_debut=None, date_fin=None):
                     "compte": c,
                     "intitule": PLAN_COMPTABLE.get(c, "Autre"),
                     "montant": solde,
+                    "initial": comptes[c].get("initial", 0),
+                    "mouvements": comptes[c].get("mvt", 0),
                 })
 
-    # Classe 5 : Tresorerie
-    tresorerie = 0
+    # Classe 5
     for c in sorted(comptes):
         if c.startswith("5"):
             solde = comptes[c]["debit"] - comptes[c]["credit"]
@@ -535,15 +638,16 @@ def etat_bilan(date_debut=None, date_fin=None):
                     "compte": c,
                     "intitule": PLAN_COMPTABLE.get(c, "Autre"),
                     "montant": solde,
+                    "initial": comptes[c].get("initial", 0),
+                    "mouvements": comptes[c].get("mvt", 0),
                 })
-            tresorerie += solde
 
     total_actif = sum(a["montant"] for a in actif)
 
     # ===== PASSIF =====
     passif = []
 
-    # Classe 1 : Capitaux propres et emprunts
+    # Classe 1
     for c in sorted(comptes):
         if c.startswith("1"):
             solde = comptes[c]["credit"] - comptes[c]["debit"]
@@ -552,26 +656,34 @@ def etat_bilan(date_debut=None, date_fin=None):
                     "compte": c,
                     "intitule": PLAN_COMPTABLE.get(c, "Autre"),
                     "montant": solde,
+                    "initial": -comptes[c].get("initial", 0),
+                    "mouvements": comptes[c].get("mvt", 0) * -1,
                 })
 
-    # Resultat de l'exercice
+    # Resultat
     if abs(resultat) > 0.01:
         passif.append({
             "compte": "130",
             "intitule": "Resultat net de l'exercice",
             "montant": resultat,
+            "initial": 0,
+            "mouvements": resultat,
         })
 
-    # 422 Personnel - Engagements contractuels a payer (dettes)
+    # 422 Personnel
     dettes_personnel = _calculer_dettes_personnel()
     if dettes_personnel > 0.01:
+        init_422 = passif_init.get("422", 0)
+        mvt_422 = dettes_personnel - init_422 if init_422 else dettes_personnel
         passif.append({
             "compte": "422",
             "intitule": "Personnel - Engagements a payer",
             "montant": dettes_personnel,
+            "initial": init_422,
+            "mouvements": mvt_422,
         })
 
-    # Autres dettes (classe 4 creditrice, hors 422)
+    # Autres dettes classe 4
     for c in sorted(comptes):
         if c.startswith("4") and c != "422":
             solde = comptes[c]["credit"] - comptes[c]["debit"]
@@ -580,7 +692,26 @@ def etat_bilan(date_debut=None, date_fin=None):
                     "compte": c,
                     "intitule": PLAN_COMPTABLE.get(c, "Autre"),
                     "montant": solde,
+                    "initial": -comptes[c].get("initial", 0),
+                    "mouvements": comptes[c].get("mvt", 0) * -1,
                 })
+
+    # ===== EQUILIBRAGE AUTOMATIQUE =====
+    total_init_actif = sum(actif_init.values())
+    total_init_passif = sum(passif_init.values())
+
+    autres_passifs = sum(p["montant"] for p in passif)
+    capitaux_equilibrage = total_actif - autres_passifs
+
+    if abs(capitaux_equilibrage) > 0.01:
+        init_capital = total_init_actif - total_init_passif
+        passif.append({
+            "compte": "101",
+            "intitule": "Capital / Report a nouveau",
+            "montant": capitaux_equilibrage,
+            "initial": init_capital,
+            "mouvements": resultat,
+        })
 
     total_passif = sum(p["montant"] for p in passif)
 
@@ -593,11 +724,13 @@ def etat_bilan(date_debut=None, date_fin=None):
         "total_actif": total_actif,
         "total_passif": total_passif,
         "resultat": resultat,
+        "bilan_initial_integre": (total_init_actif > 0.01 or total_init_passif > 0.01),
+        "total_init_actif": total_init_actif,
+        "total_init_passif": total_init_passif,
     }
 
 
 def _calculer_impayes():
-    """Calcule le total des impayes (creances eleves)"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -621,7 +754,6 @@ def _calculer_impayes():
 
 
 def _calculer_avances_en_cours():
-    """Calcule le total des avances non encore deduites"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -635,7 +767,6 @@ def _calculer_avances_en_cours():
 
 
 def _calculer_dettes_personnel():
-    """Calcule le total des engagements envers le personnel non payes"""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
@@ -659,7 +790,6 @@ def _calculer_dettes_personnel():
 # 6. ETAT DE TRESORERIE
 # ============================================================
 def etat_tresorerie(date_debut=None, date_fin=None):
-    """Etat des flux de tresorerie"""
     ecritures = _collecter_ecritures(date_debut, date_fin)
 
     encaissements = []

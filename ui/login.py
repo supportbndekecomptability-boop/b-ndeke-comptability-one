@@ -4,6 +4,7 @@ Ecran de connexion de B-NDEKE Comptability One
 import customtkinter as ctk
 from config import COLOR_NAVY, COLOR_GOLD, COLOR_BG
 from core.utilisateurs import authentifier
+from core.session import sauvegarder_session
 
 
 class LoginWindow(ctk.CTk):
@@ -107,14 +108,6 @@ class LoginWindow(ctk.CTk):
             command=self._se_connecter,
         ).pack(padx=40, pady=(10, 20), fill="x")
 
-        # Info premier lancement
-        ctk.CTkLabel(
-            card,
-            text="Premier lancement ? admin@bndeke.com / admin123",
-            font=("Segoe UI", 10),
-            text_color="#999999",
-        ).pack(pady=(0, 20))
-
         # Lier la touche Entree
         self.entree_mdp.bind("<Return>", lambda e: self._se_connecter())
 
@@ -130,6 +123,7 @@ class LoginWindow(ctk.CTk):
 
         if utilisateur:
             self.utilisateur_connecte = utilisateur
+            sauvegarder_session(utilisateur)
             self.destroy()
         else:
             self.label_message.configure(text="Email ou mot de passe incorrect.")

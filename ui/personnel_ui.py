@@ -11,6 +11,7 @@ from core.personnel import (
 )
 from core.avances import total_avance_en_cours
 from ui.avances_ui import AvancesWindow
+from ui.editer_avances_ui import EditerAvancesWindow
 
 
 class PersonnelPage(ctk.CTkFrame):
@@ -42,7 +43,6 @@ class PersonnelPage(ctk.CTkFrame):
             command=self._ouvrir_formulaire,
         ).pack(side="right")
 
-        # Recherche
         recherche_frame = ctk.CTkFrame(self, fg_color="white", corner_radius=10)
         recherche_frame.pack(fill="x", pady=(0, 10))
 
@@ -76,18 +76,17 @@ class PersonnelPage(ctk.CTkFrame):
             command=self._effacer_recherche,
         ).pack(side="right", padx=15, pady=12)
 
-        # Astuce
         info_frame = ctk.CTkFrame(self, fg_color="#FFF7E0", corner_radius=6)
         info_frame.pack(fill="x", pady=(0, 10))
         ctk.CTkLabel(
             info_frame,
             text="Astuce : cliquez sur un code (souligne) pour le copier  |  "
-                 "Bouton A = Avances sur salaire  |  Shift + molette pour defiler",
+                 "P = Payer  |  A = Avances  |  E = Editer avances  |  "
+                 "M = Modifier  |  X = Supprimer",
             font=("Segoe UI", 11),
             text_color="#8B6914",
         ).pack(padx=15, pady=6, anchor="w")
 
-        # Compteur
         self.label_compteur = ctk.CTkLabel(
             self,
             text="",
@@ -96,7 +95,6 @@ class PersonnelPage(ctk.CTkFrame):
         )
         self.label_compteur.pack(anchor="w", pady=(0, 10))
 
-        # Tableau avec scroll horizontal
         self.tableau = HorizontalScrollFrame(self, fg_color="white", corner_radius=10)
         self.tableau.pack(fill="both", expand=True)
 
@@ -107,17 +105,17 @@ class PersonnelPage(ctk.CTkFrame):
         entete.pack(fill="x", pady=(0, 5))
 
         colonnes = [
-            ("Code", 100),
-            ("Nom", 110),
-            ("Prenom", 110),
-            ("Fonction", 130),
-            ("Telephone", 130),
-            ("Salaire/mois", 110),
-            ("Mois", 55),
-            ("Engagement", 110),
-            ("Paye", 100),
-            ("Reste a payer", 110),
-            ("Avance", 100),
+            ("Code", 85),
+            ("Nom", 100),
+            ("Prenom", 90),
+            ("Fonction", 100),
+            ("Telephone", 110),
+            ("Salaire/mois", 90),
+            ("Mois", 45),
+            ("Engagement", 90),
+            ("Paye", 80),
+            ("Reste a payer", 90),
+            ("Avance", 80),
         ]
 
         for nom, largeur in colonnes:
@@ -135,7 +133,7 @@ class PersonnelPage(ctk.CTkFrame):
             text="Actions",
             font=("Segoe UI", 11, "bold"),
             text_color=COLOR_NAVY,
-            width=130,
+            width=220,
             anchor="center",
         ).pack(side="left", padx=4, pady=10)
 
@@ -173,19 +171,17 @@ class PersonnelPage(ctk.CTkFrame):
             paye = p.get("total_paye", 0) or 0
             reste = p.get("solde_a_payer", 0) or 0
 
-            # Avance en cours
             try:
                 avance = total_avance_en_cours(p["id"])
             except Exception:
                 avance = 0
 
-            # Code cliquable
             label_code = ctk.CTkLabel(
                 ligne,
                 text=p["code"],
                 font=("Segoe UI", 11, "bold", "underline"),
                 text_color="#0066CC",
-                width=100,
+                width=85,
                 anchor="w",
                 cursor="hand2",
             )
@@ -199,16 +195,16 @@ class PersonnelPage(ctk.CTkFrame):
             couleur_avance = "#e67e22" if avance > 0.01 else "#999999"
 
             valeurs = [
-                (p["nom"], 110, "#333333", "normal"),
-                (p["prenom"], 110, "#333333", "normal"),
-                (p["fonction"], 130, "#333333", "normal"),
-                (p["telephone"] or "-", 130, "#333333", "normal"),
-                (format_montant(salaire), 110, "#333333", "normal"),
-                (str(duree), 55, "#333333", "normal"),
-                (format_montant(engagement), 110, "#8e44ad", "normal"),
-                (format_montant(paye), 100, "#27ae60", "normal"),
-                (format_montant(reste), 110, couleur_reste, "bold"),
-                (format_montant(avance), 100, couleur_avance, "bold"),
+                (p["nom"], 100, "#333333", "normal"),
+                (p["prenom"], 90, "#333333", "normal"),
+                (p["fonction"], 100, "#333333", "normal"),
+                (p["telephone"] or "-", 110, "#333333", "normal"),
+                (format_montant(salaire), 90, "#333333", "normal"),
+                (str(duree), 45, "#333333", "normal"),
+                (format_montant(engagement), 90, "#8e44ad", "normal"),
+                (format_montant(paye), 80, "#27ae60", "normal"),
+                (format_montant(reste), 90, couleur_reste, "bold"),
+                (format_montant(avance), 80, couleur_avance, "bold"),
             ]
 
             for valeur, largeur, couleur, poids in valeurs:
@@ -221,9 +217,17 @@ class PersonnelPage(ctk.CTkFrame):
                     anchor="w",
                 ).pack(side="left", padx=4, pady=10)
 
-            # Actions (A = Avances, M = Modifier, X = Supprimer)
-            actions = ctk.CTkFrame(ligne, fg_color="transparent", width=130)
+            # Actions : P, A, E, M, X
+            actions = ctk.CTkFrame(ligne, fg_color="transparent", width=220)
             actions.pack(side="left", padx=4)
+
+            ctk.CTkButton(
+                actions, text="P",
+                font=("Segoe UI", 11, "bold"),
+                width=36, height=28,
+                fg_color="#27ae60", hover_color="#229954",
+                command=lambda pp=p: self._ouvrir_paiement(pp),
+            ).pack(side="left", padx=2)
 
             ctk.CTkButton(
                 actions, text="A",
@@ -231,6 +235,14 @@ class PersonnelPage(ctk.CTkFrame):
                 width=36, height=28,
                 fg_color="#e67e22", hover_color="#d35400",
                 command=lambda pp=p: self._ouvrir_avances(pp),
+            ).pack(side="left", padx=2)
+
+            ctk.CTkButton(
+                actions, text="E",
+                font=("Segoe UI", 11, "bold"),
+                width=36, height=28,
+                fg_color="#9b59b6", hover_color="#8e44ad",
+                command=lambda pp=p: self._editer_avances(pp),
             ).pack(side="left", padx=2)
 
             ctk.CTkButton(
@@ -270,13 +282,38 @@ class PersonnelPage(ctk.CTkFrame):
         self._ouvrir_formulaire(complet)
 
     def _ouvrir_avances(self, p):
-        """Ouvre la fenetre de gestion des avances de cet employe"""
         AvancesWindow(
             self,
             p["id"],
             f"{p['nom']} {p['prenom']}",
             on_save=self.rafraichir_tableau,
         )
+
+    def _editer_avances(self, p):
+        EditerAvancesWindow(
+            self,
+            p["id"],
+            f"{p['nom']} {p['prenom']}",
+            on_save=self.rafraichir_tableau,
+        )
+
+    def _ouvrir_paiement(self, p):
+        try:
+            from ui.paiement_personnel_ui import PaiementPersonnelWindow
+            complet = get_personnel(p["id"])
+            PaiementPersonnelWindow(
+                self,
+                complet,
+                on_save=self.rafraichir_tableau,
+            )
+        except ImportError:
+            messagebox.showerror(
+                "Indisponible",
+                "Le module de paiement personnel n'est pas encore installe.\n\n"
+                "Contactez B-NDEKE."
+            )
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur : {e}")
 
     def _supprimer(self, p):
         rep = messagebox.askyesno(
@@ -295,7 +332,7 @@ class PersonnelPage(ctk.CTkFrame):
 
 
 # ============================================================
-# FORMULAIRE - Champs importants en HAUT
+# FORMULAIRE
 # ============================================================
 class FormulairePersonnel(ctk.CTkToplevel):
     def __init__(self, parent, personne=None, on_save=None):
@@ -358,7 +395,6 @@ class FormulairePersonnel(ctk.CTkToplevel):
 
         self.champs = {}
 
-        # ===== IDENTITE =====
         self.champs["code"] = self._ajouter_champ(
             zone, "Code *",
             valeur=self.personne["code"] if self.personne else generer_code()
@@ -374,7 +410,6 @@ class FormulairePersonnel(ctk.CTkToplevel):
             valeur=self.personne["prenom"] if self.personne else ""
         )
 
-        # Fonction
         ctk.CTkLabel(
             zone, text="Fonction * (tapez librement)",
             font=("Segoe UI", 12, "bold"), text_color="#333333", anchor="w"
@@ -401,7 +436,6 @@ class FormulairePersonnel(ctk.CTkToplevel):
                 command=lambda f=fonction_rapide: self._set_fonction(f),
             ).pack(side="left", padx=(0, 4))
 
-        # ===== SALAIRE ET DUREE =====
         separateur = ctk.CTkFrame(zone, fg_color="#e0e0e0", height=1)
         separateur.pack(fill="x", padx=10, pady=(10, 5))
 
@@ -421,7 +455,6 @@ class FormulairePersonnel(ctk.CTkToplevel):
             valeur=valeur_salaire
         )
 
-        # Duree
         valeur_duree = "12"
         if self.personne and self.personne.get("duree_contrat_mois"):
             valeur_duree = str(int(self.personne["duree_contrat_mois"]))
@@ -483,7 +516,6 @@ class FormulairePersonnel(ctk.CTkToplevel):
         self.champs["salaire_mensuel"].bind("<KeyRelease>", lambda e: self._maj_apercu())
         self._maj_apercu()
 
-        # ===== AUTRES =====
         separateur2 = ctk.CTkFrame(zone, fg_color="#e0e0e0", height=1)
         separateur2.pack(fill="x", padx=10, pady=(5, 5))
 
@@ -516,7 +548,6 @@ class FormulairePersonnel(ctk.CTkToplevel):
             valeur=self.personne["email"] if self.personne and self.personne["email"] else ""
         )
 
-        # ===== BOUTONS =====
         boutons = ctk.CTkFrame(card, fg_color="transparent")
         boutons.pack(fill="x", padx=15, pady=(5, 12))
 

@@ -500,3 +500,319 @@ def pdf_tresorerie(donnees):
 
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return chemin
+
+
+
+# ============================================================
+# PDF SUIVI BUDGETAIRE
+# ============================================================
+def pdf_suivi_budgetaire(donnees):
+    """
+    Genere un PDF du suivi budgetaire.
+    donnees = resultat de suivi_budgetaire_complet()
+    Retourne le chemin du PDF.
+    """
+    import os
+    from datetime import datetime
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+
+    from config import DATA_DIR, format_montant
+
+    dossier = os.path.join(DATA_DIR, "rapports")
+    os.makedirs(dossier, exist_ok=True)
+
+    nom = f"Suivi_budgetaire_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    chemin = os.path.join(dossier, nom)
+
+    doc = SimpleDocTemplate(
+        chemin, pagesize=A4,
+        leftMargin=1.2 * cm, rightMargin=1.2 * cm,
+        topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+    )
+
+    styles = getSampleStyleSheet()
+    titre_style = ParagraphStyle(
+        'Titre', parent=styles['Heading1'],
+        alignment=TA_CENTER, fontSize=15, spaceAfter=12,
+        textColor=colors.HexColor("#0F2C5C"),
+    )
+    sous_titre = ParagraphStyle(
+        'SousTitre', parent=styles['Heading2'],
+        fontSize=11, spaceAfter=6, spaceBefore=10,
+        textColor=colors.HexColor("#0F2C5C"),
+    )
+
+    elements = []
+    elements.append(Paragraph("SUIVI BUDGETAIRE", titre_style))
+    elements.append(Paragraph(
+        f"Genere le {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        ParagraphStyle('date', parent=styles['Normal'],
+                       alignment=TA_CENTER, fontSize=9,
+                       textColor=colors.grey)
+    ))
+    elements.append(Spacer(1, 0.5 * cm))
+
+    # Recapitulatif global
+    total_prevu = sum(donnees[k]["prevu"] for k in donnees)
+    total_reel = sum(donnees[k]["reel"] for k in donnees)
+    total_ecart = total_prevu - total_reel
+
+    data_global = [
+        ["RECAPITULATIF GLOBAL", "", ""],
+        ["Total prevu", "Total depense", "Ecart"],
+        [format_montant(total_prevu), format_montant(total_reel),
+         ("+ " if total_ecart >= 0 else "- ") + format_montant(abs(total_ecart))],
+    ]
+
+    t_global = Table(data_global, colWidths=[6 * cm, 6 * cm, 6 * cm])
+    t_global.setStyle(TableStyle([
+        ('SPAN', (0, 0), (-1, 0)),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#0F2C5C")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTSIZE', (0, 0), (-1, 0), 11),
+        ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor("#F0F7FF")),
+        ('FONTNAME', (0, 1), (-1, 1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 1), (-1, 1), 10),
+        ('FONTNAME', (0, 2), (-1, 2), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 2), (-1, 2), 11),
+        ('BACKGROUND', (0, 2), (-1, 2), colors.HexColor("#E8F4EA")),
+        ('BOX', (0, 0), (-1, -1), 1, colors.black),
+        ('GRID', (0, 1), (-1, -1), 0.5, colors.grey),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(t_global)
+    elements.append(Spacer(1, 0.7 * cm))
+
+    # Detail par budget
+    labels = {
+        "prime": "PRIME",
+        "investissement": "INVESTISSEMENT",
+        "fonctionnement": "FONCTIONNEMENT",
+    }
+
+    for key, label in labels.items():
+        b = donnees.get(key, {})
+        if not b:
+            continue
+
+        elements.append(Paragraph(label, sous_titre))
+
+        # Resume du budget
+        p = b["prevu"]
+        r = b["reel"]
+        e = b["ecart"]
+        pct = min(100, (r / p * 100) if p > 0 else 0)
+
+        resume = [
+            [f"Prevu : {format_montant(p)}",
+             f"Reel : {format_montant(r)}",
+             f"Ecart : {('+ ' if e >= 0 else '- ') + format_montant(abs(e))}",
+             f"Utilise : {pct:.0f}%"]
+        ]
+        t_resume = Table(resume, colWidths=[4.5 * cm, 4.5 * cm, 4.5 * cm, 4.5 * cm])
+        t_resume.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#F5F5F5")),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        elements.append(t_resume)
+        elements.append(Spacer(1, 0.2 * cm))
+
+        # Tableau sous-categories
+        data_sous = [["Sous-categorie", "Prevu", "Reel", "Ecart"]]
+        for nom, info in b["sous_categories"].items():
+            data_sous.append([
+                nom,
+                format_montant(info["prevu"]),
+                format_montant(info["reel"]),
+                ("+ " if info["ecart"] >= 0 else "- ") + format_montant(abs(info["ecart"])),
+            ])
+
+        t_sous = Table(data_sous, colWidths=[7 * cm, 3.5 * cm, 3.5 * cm, 4 * cm])
+        t_sous.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#0F2C5C")),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        elements.append(t_sous)
+        elements.append(Spacer(1, 0.5 * cm))
+
+    doc.build(elements)
+    return chemin
+
+    
+
+# ============================================================
+# PDF SUIVI BUDGETAIRE
+# ============================================================
+def pdf_suivi_budgetaire(donnees):
+    """
+    Genere un PDF du suivi budgetaire.
+    donnees = resultat de suivi_budgetaire_complet()
+    Retourne le chemin du PDF.
+    """
+    import os
+    from datetime import datetime
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+
+    from config import DATA_DIR, format_montant
+
+    dossier = os.path.join(DATA_DIR, "rapports")
+    os.makedirs(dossier, exist_ok=True)
+
+    nom = f"Suivi_budgetaire_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    chemin = os.path.join(dossier, nom)
+
+    doc = SimpleDocTemplate(
+        chemin, pagesize=A4,
+        leftMargin=1.2 * cm, rightMargin=1.2 * cm,
+        topMargin=1.5 * cm, bottomMargin=1.5 * cm,
+    )
+
+    styles = getSampleStyleSheet()
+    titre_style = ParagraphStyle(
+        'Titre', parent=styles['Heading1'],
+        alignment=TA_CENTER, fontSize=15, spaceAfter=12,
+        textColor=colors.HexColor("#0F2C5C"),
+    )
+    sous_titre = ParagraphStyle(
+        'SousTitre', parent=styles['Heading2'],
+        fontSize=11, spaceAfter=6, spaceBefore=10,
+        textColor=colors.HexColor("#0F2C5C"),
+    )
+
+    elements = []
+    elements.append(Paragraph("SUIVI BUDGETAIRE", titre_style))
+    elements.append(Paragraph(
+        f"Genere le {datetime.now().strftime('%d/%m/%Y %H:%M')}",
+        ParagraphStyle('date', parent=styles['Normal'],
+                       alignment=TA_CENTER, fontSize=9,
+                       textColor=colors.grey)
+    ))
+    elements.append(Spacer(1, 0.5 * cm))
+
+    # Recapitulatif global
+    total_prevu = sum(donnees[k]["prevu"] for k in donnees)
+    total_reel = sum(donnees[k]["reel"] for k in donnees)
+    total_ecart = total_prevu - total_reel
+
+    data_global = [
+        ["RECAPITULATIF GLOBAL", "", ""],
+        ["Total prevu", "Total depense", "Ecart"],
+        [format_montant(total_prevu), format_montant(total_reel),
+         ("+ " if total_ecart >= 0 else "- ") + format_montant(abs(total_ecart))],
+    ]
+
+    t_global = Table(data_global, colWidths=[6 * cm, 6 * cm, 6 * cm])
+    t_global.setStyle(TableStyle([
+        ('SPAN', (0, 0), (-1, 0)),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#0F2C5C")),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTSIZE', (0, 0), (-1, 0), 11),
+        ('BACKGROUND', (0, 1), (-1, 1), colors.HexColor("#F0F7FF")),
+        ('FONTNAME', (0, 1), (-1, 1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 1), (-1, 1), 10),
+        ('FONTNAME', (0, 2), (-1, 2), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 2), (-1, 2), 11),
+        ('BACKGROUND', (0, 2), (-1, 2), colors.HexColor("#E8F4EA")),
+        ('BOX', (0, 0), (-1, -1), 1, colors.black),
+        ('GRID', (0, 1), (-1, -1), 0.5, colors.grey),
+        ('TOPPADDING', (0, 0), (-1, -1), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(t_global)
+    elements.append(Spacer(1, 0.7 * cm))
+
+    # Detail par budget
+    labels = {
+        "prime": "PRIME",
+        "investissement": "INVESTISSEMENT",
+        "fonctionnement": "FONCTIONNEMENT",
+    }
+
+    for key, label in labels.items():
+        b = donnees.get(key, {})
+        if not b:
+            continue
+
+        elements.append(Paragraph(label, sous_titre))
+
+        p = b["prevu"]
+        r = b["reel"]
+        e = b["ecart"]
+        pct = min(100, (r / p * 100) if p > 0 else 0)
+
+        resume = [
+            [f"Prevu : {format_montant(p)}",
+             f"Reel : {format_montant(r)}",
+             f"Ecart : {('+ ' if e >= 0 else '- ') + format_montant(abs(e))}",
+             f"Utilise : {pct:.0f}%"]
+        ]
+        t_resume = Table(resume, colWidths=[4.5 * cm, 4.5 * cm, 4.5 * cm, 4.5 * cm])
+        t_resume.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#F5F5F5")),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTSIZE', (0, 0), (-1, -1), 9),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        elements.append(t_resume)
+        elements.append(Spacer(1, 0.2 * cm))
+
+        data_sous = [["Sous-categorie", "Prevu", "Reel", "Ecart"]]
+        for nom, info in b["sous_categories"].items():
+            data_sous.append([
+                nom,
+                format_montant(info["prevu"]),
+                format_montant(info["reel"]),
+                ("+ " if info["ecart"] >= 0 else "- ") + format_montant(abs(info["ecart"])),
+            ])
+
+        t_sous = Table(data_sous, colWidths=[7 * cm, 3.5 * cm, 3.5 * cm, 4 * cm])
+        t_sous.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#0F2C5C")),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 9),
+            ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+            ('FONTSIZE', (0, 1), (-1, -1), 8),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+            ('BOX', (0, 0), (-1, -1), 1, colors.black),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ]))
+        elements.append(t_sous)
+        elements.append(Spacer(1, 0.5 * cm))
+
+    doc.build(elements)
+    return chemin

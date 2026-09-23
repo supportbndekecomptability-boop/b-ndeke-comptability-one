@@ -1,5 +1,5 @@
 """
-Interface Parametres - Ecole + Utilisateurs + Sauvegarde
+Interface Parametres - Ecole + Bilan initial + Budgets + Utilisateurs + Sauvegarde
 """
 import os
 import sys
@@ -27,6 +27,8 @@ from core.utilisateurs import (
     lister_utilisateurs, creer_utilisateur, modifier_utilisateur,
     supprimer_utilisateur, email_existe, compter_admins,
 )
+from ui.bilan_initial_ui import BilanInitialPage
+from ui.budgets_ui import BudgetsPage
 
 
 class ParametresPage(ctk.CTkFrame):
@@ -45,10 +47,14 @@ class ParametresPage(ctk.CTkFrame):
         self.tabview.pack(fill="both", expand=True)
 
         self.tabview.add("Informations Ecole")
+        self.tabview.add("Bilan initial")
+        self.tabview.add("Budgets")
         self.tabview.add("Utilisateurs")
         self.tabview.add("Sauvegarde")
 
         self._construire_onglet_ecole(self.tabview.tab("Informations Ecole"))
+        self._construire_onglet_bilan_initial(self.tabview.tab("Bilan initial"))
+        self._construire_onglet_budgets(self.tabview.tab("Budgets"))
         self._construire_onglet_utilisateurs(self.tabview.tab("Utilisateurs"))
         self._construire_onglet_sauvegarde(self.tabview.tab("Sauvegarde"))
 
@@ -103,7 +109,6 @@ class ParametresPage(ctk.CTkFrame):
         self.champs_ecole["email"].insert(0, info["email"])
         self.champs_ecole["email"].pack(padx=5, pady=(0, 15), fill="x")
 
-        # Logo
         ctk.CTkLabel(zone, text="Logo de l'ecole",
                      font=("Segoe UI", 12, "bold"),
                      text_color="#333333", anchor="w").pack(padx=5, pady=(8, 4), fill="x")
@@ -211,7 +216,21 @@ class ParametresPage(ctk.CTkFrame):
                             "Elles apparaitront sur les prochains rapports PDF.")
 
     # ============================================================
-    # ONGLET 2 : UTILISATEURS
+    # ONGLET : BILAN INITIAL
+    # ============================================================
+    def _construire_onglet_bilan_initial(self, parent):
+        page = BilanInitialPage(parent, utilisateur=self.utilisateur_connecte)
+        page.pack(fill="both", expand=True)
+
+    # ============================================================
+    # ONGLET : BUDGETS
+    # ============================================================
+    def _construire_onglet_budgets(self, parent):
+        page = BudgetsPage(parent, utilisateur=self.utilisateur_connecte)
+        page.pack(fill="both", expand=True)
+
+    # ============================================================
+    # ONGLET : UTILISATEURS
     # ============================================================
     def _construire_onglet_utilisateurs(self, parent):
         top = ctk.CTkFrame(parent, fg_color="transparent")
@@ -332,7 +351,7 @@ class ParametresPage(ctk.CTkFrame):
                 messagebox.showerror("Erreur", msg)
 
     # ============================================================
-    # ONGLET 3 : SAUVEGARDE
+    # ONGLET : SAUVEGARDE
     # ============================================================
     def _construire_onglet_sauvegarde(self, parent):
         zone = ctk.CTkScrollableFrame(parent, fg_color="transparent")

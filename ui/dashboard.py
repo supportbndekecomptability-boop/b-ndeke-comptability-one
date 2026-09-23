@@ -22,6 +22,8 @@ from core.paiements import (
 from core.eleves import compter_eleves
 from core.personnel import compter_personnel
 from core.depenses import total_depenses_mois, compter_depenses
+from core.session import supprimer_session
+from core.budgets import get_budgets, liste_budgets
 
 
 class DashboardWindow(ctk.CTk):
@@ -29,6 +31,7 @@ class DashboardWindow(ctk.CTk):
         super().__init__()
 
         self.utilisateur = utilisateur
+        self.deconnexion_demandee = False
         self.page_active = "Tableau de bord"
 
         self.title(f"{APP_NAME} v{APP_VERSION}")
@@ -48,7 +51,6 @@ class DashboardWindow(ctk.CTk):
         sidebar.pack(side="left", fill="y")
         sidebar.pack_propagate(False)
 
-        # Logo compact
         ctk.CTkLabel(
             sidebar, text="B-NDEKE",
             font=("Segoe UI", 20, "bold"),
@@ -75,7 +77,6 @@ class DashboardWindow(ctk.CTk):
             "Parametres",
         ]
 
-        # Menu compact
         self.boutons_menu = {}
         for texte in menu_items:
             btn = ctk.CTkButton(
@@ -94,7 +95,6 @@ class DashboardWindow(ctk.CTk):
 
         self._mettre_a_jour_menu()
 
-        # Bas sidebar - utilisateur
         ctk.CTkLabel(
             sidebar, text=f"{self.utilisateur['nom_complet']}",
             font=("Segoe UI", 11, "bold"),
@@ -254,20 +254,25 @@ class DashboardWindow(ctk.CTk):
 
     # ================== PAGES ==================
     def _page_tableau_de_bord(self):
+        # Conteneur scrollable pour petits ecrans
+        scroll = ctk.CTkScrollableFrame(self.contenu, fg_color="transparent")
+        scroll.pack(fill="both", expand=True)
+
         ctk.CTkLabel(
-            self.contenu,
+            scroll,
             text=f"Bienvenue, {self.utilisateur['nom_complet']} !",
             font=("Segoe UI", 22, "bold"),
             text_color=COLOR_NAVY,
         ).pack(anchor="w", pady=(0, 8))
 
         ctk.CTkLabel(
-            self.contenu,
+            scroll,
             text="Vue d'ensemble de votre etablissement.",
             font=("Segoe UI", 12),
             text_color="#666666",
         ).pack(anchor="w", pady=(0, 20))
 
+        # ===== CHARGER LES DONNEES =====
         try:
             recettes_jour = total_caisse_eleves_jour()
         except Exception:
@@ -305,7 +310,8 @@ class DashboardWindow(ctk.CTk):
         benefice = recettes_mois - depenses_mois_total
         couleur_benefice = "#27ae60" if benefice >= 0 else "#e74c3c"
 
-        cartes = ctk.CTkFrame(self.contenu, fg_color="transparent")
+        # ===== CARTES STATS =====
+        cartes = ctk.CTkFrame(scroll, fg_color="transparent")
         cartes.pack(fill="x", pady=8)
 
         for titre, valeur, couleur, sous_titre in [
@@ -328,7 +334,7 @@ class DashboardWindow(ctk.CTk):
             ctk.CTkLabel(carte, text=sous_titre,
                          font=("Segoe UI", 9), text_color="#aaaaaa").pack(pady=(0, 15))
 
-        cartes2 = ctk.CTkFrame(self.contenu, fg_color="transparent")
+        cartes2 = ctk.CTkFrame(scroll, fg_color="transparent")
         cartes2.pack(fill="x", pady=(12, 10))
 
         for titre, valeur, couleur, sous_titre in [
@@ -349,6 +355,112 @@ class DashboardWindow(ctk.CTk):
             ctk.CTkLabel(carte, text=sous_titre,
                          font=("Segoe UI", 9), text_color="#aaaaaa").pack(pady=(0, 15))
 
+        # ===== SECTION BUDGETS =====
+        self._afficher_budgets(scroll)
+
+    def _afficher_budgets(self, parent):
+        """Affiche les 3 cartes budget."""
+        try:
+            data = get_budgets()
+        except Exception as e:
+            print(f"[DASHBOARD] Erreur budgets : {e}")
+            return
+
+        total = data.get("budget_total_annuel", 0) or 0
+
+        # Titre section
+        ligne_titre = ctk.CTkFrame(parent, fg_color="transparent")
+        ligne_titre.pack(fill="x", pady=(20, 8))
+
+        ctk.CTkLabel(
+            ligne_titre,
+            text="Repartition budgetaire",
+            font=("Segoe UI", 16, "bold"),
+            text_color=COLOR_NAVY,
+        ).pack(side="left")
+
+        if total > 0:
+            ctk.CTkLabel(
+                ligne_titre,
+                text=f"Budget annuel : {format_montant(total)}",
+                font=("Segoe UI", 12, "bold"),
+                text_color="#666666",
+            ).pack(side="right")
+
+        # 3 cartes budget
+        cartes_b = ctk.CTkFrame(parent, fg_color="transparent")
+        cartes_b.pack(fill="x", pady=(0, 15))
+
+        for key, label, couleur in liste_budgets():
+            b = data.get(key, {})
+            pct = b.get("pourcentage", 0)
+            montant = b.get("montant", 0)
+
+            carte = ctk.CTkFrame(cartes_b, fg_color="white", corner_radius=12,
+                                 border_width=2, border_color=couleur)
+            carte.pack(side="left", expand=True, fill="both", padx=6)
+
+            ctk.CTkLabel(
+                carte, text=label,
+                font=("Segoe UI", 12, "bold"),
+                text_color=couleur,
+            ).pack(pady=(18, 5))
+
+            ctk.CTkLabel(
+                carte, text=f"{int(pct)}%",
+                font=("Segoe UI", 10),
+                text_color="#888888",
+            ).pack()
+
+            ctk.CTkLabel(
+                carte, text=format_montant(montant),
+                font=("Segoe UI", 18, "bold"),
+                text_color=couleur,
+            ).pack(pady=(5, 8))
+
+            # Compter les sous-categories
+            nb_sous = len(b.get("sous_categories", {}))
+            ctk.CTkLabel(
+                carte, text=f"{nb_sous} sous-categorie(s)",
+                font=("Segoe UI", 9),
+                text_color="#aaaaaa",
+            ).pack(pady=(0, 15))
+
+        # Bouton voir details
+        if total > 0:
+            ctk.CTkButton(
+                parent,
+                text="Voir le detail des budgets",
+                font=("Segoe UI", 11),
+                fg_color="#e0e0e0", text_color="#333333",
+                hover_color="#c0c0c0",
+                height=34,
+                command=lambda: self._changer_page("Parametres"),
+            ).pack(anchor="e", pady=(0, 10))
+        else:
+            cadre_vide = ctk.CTkFrame(parent, fg_color="#FFF7E0", corner_radius=8)
+            cadre_vide.pack(fill="x", pady=(0, 10))
+
+            ctk.CTkLabel(
+                cadre_vide,
+                text=(
+                    "Aucun budget n'a encore ete configure. "
+                    "Allez dans Parametres > Budgets pour definir votre budget annuel."
+                ),
+                font=("Segoe UI", 10),
+                text_color="#8B6914",
+                justify="left",
+            ).pack(padx=15, pady=10, anchor="w")
+
+            ctk.CTkButton(
+                parent,
+                text="Configurer le budget",
+                font=("Segoe UI", 11, "bold"),
+                fg_color=COLOR_NAVY, hover_color="#1a3d75",
+                height=34,
+                command=lambda: self._changer_page("Parametres"),
+            ).pack(anchor="e", pady=(0, 10))
+
     def _page_placeholder(self, nom_page):
         ctk.CTkLabel(self.contenu, text=f"{nom_page}",
                      font=("Segoe UI", 26, "bold"),
@@ -358,4 +470,6 @@ class DashboardWindow(ctk.CTk):
                      font=("Segoe UI", 14), text_color="#888888").pack(anchor="w")
 
     def _se_deconnecter(self):
+        self.deconnexion_demandee = True
+        supprimer_session()
         self.destroy()

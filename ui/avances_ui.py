@@ -3,11 +3,31 @@ Gestion des avances sur salaire - Fenetre modale
 """
 import customtkinter as ctk
 from tkinter import messagebox
+from datetime import datetime
 from config import COLOR_NAVY, COLOR_GOLD, format_montant, CURRENCY_SYMBOL
+from database import get_connection
 from core.avances import (
     ajouter_avance, lister_avances, total_avance_en_cours,
     supprimer_avance, get_avance,
 )
+
+
+def modifier_avance(avance_id, montant, motif, date_avance):
+    """Modifie une avance existante."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("""
+            UPDATE avances_personnel
+            SET montant = ?, motif = ?, date_avance = ?
+            WHERE id = ?
+        """, (float(montant), motif.strip(), date_avance, avance_id))
+        conn.commit()
+        return True, "Avance modifiee"
+    except Exception as e:
+        return False, f"Erreur : {str(e)}"
+    finally:
+        conn.close()
 
 
 class AvancesWindow(ctk.CTkToplevel):
@@ -21,7 +41,7 @@ class AvancesWindow(ctk.CTkToplevel):
         self.on_save = on_save
 
         self.title(f"Avances - {personnel_nom}")
-        largeur = 780
+        largeur = 850
         hauteur = 620
         self.geometry(f"{largeur}x{hauteur}")
         self.configure(fg_color="#F5F7FB")
@@ -47,7 +67,6 @@ class AvancesWindow(ctk.CTkToplevel):
             pass
 
     def _construire_interface(self):
-        # Carte principale
         card = ctk.CTkFrame(self, fg_color="white", corner_radius=15)
         card.pack(fill="both", expand=True, padx=15, pady=15)
 
@@ -101,11 +120,9 @@ class AvancesWindow(ctk.CTkToplevel):
         self.tableau.pack(fill="both", expand=True, padx=15, pady=(0, 15))
 
     def rafraichir(self):
-        # Vider
         for w in self.tableau.winfo_children():
             w.destroy()
 
-        # Total en cours
         total = total_avance_en_cours(self.personnel_id)
         self.label_resume.configure(
             text=f"Total des avances en cours : {format_montant(total)}"
@@ -135,10 +152,9 @@ class AvancesWindow(ctk.CTkToplevel):
             entete, text="Action",
             font=("Segoe UI", 11, "bold"),
             text_color=COLOR_NAVY,
-            width=70, anchor="center",
+            width=110, anchor="center",
         ).pack(side="right", padx=3, pady=10)
 
-        # Avances
         avances = lister_avances(self.personnel_id)
 
         if not avances:
@@ -185,14 +201,22 @@ class AvancesWindow(ctk.CTkToplevel):
                     width=larg, anchor="w",
                 ).pack(side="left", padx=3, pady=8)
 
-            # Boutons
-            act = ctk.CTkFrame(ligne, fg_color="transparent", width=70)
+            # Boutons M (Modifier) + X (Supprimer)
+            act = ctk.CTkFrame(ligne, fg_color="transparent", width=110)
             act.pack(side="right", padx=3)
+
+            ctk.CTkButton(
+                act, text="M",
+                font=("Segoe UI", 11, "bold"),
+                width=36, height=26,
+                fg_color="#3498db", hover_color="#2980b9",
+                command=lambda av=a: self._modifier(av),
+            ).pack(side="left", padx=2)
 
             ctk.CTkButton(
                 act, text="X",
                 font=("Segoe UI", 11, "bold"),
-                width=30, height=26,
+                width=36, height=26,
                 fg_color="#e74c3c", hover_color="#c0392b",
                 command=lambda av=a: self._supprimer(av),
             ).pack(side="left", padx=2)
@@ -200,6 +224,15 @@ class AvancesWindow(ctk.CTkToplevel):
     def _nouvelle_avance(self):
         FormulaireAvance(self, self.personnel_id, self.personnel_nom,
                         on_save=self._on_avance_change)
+
+    def _modifier(self, a):
+        FormulaireAvance(
+            self,
+            self.personnel_id,
+            self.personnel_nom,
+            avance=a,
+            on_save=self._on_avance_change,
+        )
 
     def _on_avance_change(self):
         self.rafraichir()
@@ -223,19 +256,23 @@ class AvancesWindow(ctk.CTkToplevel):
 
 
 # ============================================================
-# FORMULAIRE NOUVELLE AVANCE
+# FORMULAIRE AVANCE (nouvelle ou modification)
 # ============================================================
 class FormulaireAvance(ctk.CTkToplevel):
-    def __init__(self, parent, personnel_id, personnel_nom, on_save=None):
+    def __init__(self, parent, personnel_id, personnel_nom,
+                 avance=None, on_save=None):
         super().__init__(parent)
 
         self.personnel_id = personnel_id
         self.personnel_nom = personnel_nom
+        self.avance = avance
         self.on_save = on_save
+        self.mode_edition = avance is not None
 
-        self.title("Nouvelle avance")
+        titre = "Modifier une avance" if self.mode_edition else "Nouvelle avance"
+        self.title(titre)
         largeur = 500
-        hauteur = 520
+        hauteur = 560 if self.mode_edition else 520
         self.geometry(f"{largeur}x{hauteur}")
         self.configure(fg_color="#F5F7FB")
         self.resizable(False, False)
@@ -265,9 +302,10 @@ class FormulaireAvance(ctk.CTkToplevel):
         ligne_titre = ctk.CTkFrame(card, fg_color="transparent")
         ligne_titre.pack(fill="x", padx=15, pady=(12, 5))
 
+        titre = "Modifier l'avance" if self.mode_edition else "Nouvelle avance sur salaire"
         ctk.CTkLabel(
             ligne_titre,
-            text="Nouvelle avance sur salaire",
+            text=titre,
             font=("Segoe UI", 16, "bold"),
             text_color=COLOR_NAVY,
         ).pack(side="left")
@@ -291,6 +329,22 @@ class FormulaireAvance(ctk.CTkToplevel):
             text_color=COLOR_NAVY,
         ).pack(padx=15, pady=10, anchor="w")
 
+        # Avertissement si en cours et deja partiellement deduit
+        if self.mode_edition and self.avance.get("montant_deduit", 0) > 0.01:
+            avis = ctk.CTkFrame(card, fg_color="#FFF7E0", corner_radius=6)
+            avis.pack(fill="x", padx=30, pady=(0, 10))
+            ctk.CTkLabel(
+                avis,
+                text=(
+                    f"ATTENTION : {format_montant(self.avance['montant_deduit'])} "
+                    f"deja deduit sur cette avance.\n"
+                    f"Le montant final ne peut pas etre inferieur a cette somme."
+                ),
+                font=("Segoe UI", 10, "bold"),
+                text_color="#8B6914",
+                justify="left",
+            ).pack(padx=12, pady=8, anchor="w")
+
         # Montant
         ctk.CTkLabel(
             card, text=f"Montant de l'avance ({CURRENCY_SYMBOL}) *",
@@ -304,25 +358,28 @@ class FormulaireAvance(ctk.CTkToplevel):
             height=42,
             placeholder_text="0",
         )
+        if self.mode_edition:
+            self.entree_montant.insert(0, str(int(self.avance["montant"])))
         self.entree_montant.pack(padx=30, pady=(0, 6), fill="x")
         self.entree_montant.bind("<Return>", lambda e: self._enregistrer())
 
-        # Boutons rapides
-        rapides = ctk.CTkFrame(card, fg_color="transparent")
-        rapides.pack(padx=30, pady=(0, 10), fill="x")
+        # Boutons rapides (uniquement en creation)
+        if not self.mode_edition:
+            rapides = ctk.CTkFrame(card, fg_color="transparent")
+            rapides.pack(padx=30, pady=(0, 10), fill="x")
 
-        ctk.CTkLabel(rapides, text="Rapide :",
-                     font=("Segoe UI", 10), text_color="#888888").pack(side="left", padx=(0, 4))
+            ctk.CTkLabel(rapides, text="Rapide :",
+                         font=("Segoe UI", 10), text_color="#888888").pack(side="left", padx=(0, 4))
 
-        for m in [20, 50, 100, 200]:
-            ctk.CTkButton(
-                rapides, text=f"+{m}",
-                font=("Segoe UI", 10),
-                fg_color="#e0e0e0", text_color="#333333",
-                hover_color="#c0c0c0",
-                width=55, height=28,
-                command=lambda mm=m: self._ajouter_montant(mm),
-            ).pack(side="left", padx=2)
+            for m in [20, 50, 100, 200]:
+                ctk.CTkButton(
+                    rapides, text=f"+{m}",
+                    font=("Segoe UI", 10),
+                    fg_color="#e0e0e0", text_color="#333333",
+                    hover_color="#c0c0c0",
+                    width=55, height=28,
+                    command=lambda mm=m: self._ajouter_montant(mm),
+                ).pack(side="left", padx=2)
 
         # Motif
         ctk.CTkLabel(
@@ -337,7 +394,30 @@ class FormulaireAvance(ctk.CTkToplevel):
             height=38,
             placeholder_text="Ex: Avance sur salaire de septembre",
         )
-        self.entree_motif.pack(padx=30, pady=(0, 15), fill="x")
+        if self.mode_edition and self.avance.get("motif"):
+            self.entree_motif.insert(0, self.avance["motif"])
+        self.entree_motif.pack(padx=30, pady=(0, 10), fill="x")
+
+        # Date (uniquement en modification)
+        self.entree_date = None
+        if self.mode_edition:
+            ctk.CTkLabel(
+                card, text="Date de l'avance (AAAA-MM-JJ)",
+                font=("Segoe UI", 12, "bold"),
+                text_color="#333333", anchor="w",
+            ).pack(padx=30, pady=(5, 4), fill="x")
+
+            self.entree_date = ctk.CTkEntry(
+                card,
+                font=("Segoe UI", 12),
+                height=36,
+                placeholder_text="AAAA-MM-JJ",
+            )
+            date_av = str(self.avance.get("date_avance", ""))[:10]
+            self.entree_date.insert(0, date_av)
+            self.entree_date.pack(padx=30, pady=(0, 15), fill="x")
+        else:
+            ctk.CTkLabel(card, text="").pack(pady=5)
 
         # Boutons
         boutons = ctk.CTkFrame(card, fg_color="transparent")
@@ -351,8 +431,9 @@ class FormulaireAvance(ctk.CTkToplevel):
             command=self.destroy,
         ).pack(side="left", expand=True, fill="x", padx=(0, 5))
 
+        txt_enreg = "Enregistrer" if not self.mode_edition else "Modifier"
         ctk.CTkButton(
-            boutons, text="Enregistrer",
+            boutons, text=txt_enreg,
             font=("Segoe UI", 13, "bold"),
             fg_color=COLOR_NAVY, hover_color="#1a3d75",
             height=42, command=self._enregistrer,
@@ -384,15 +465,49 @@ class FormulaireAvance(ctk.CTkToplevel):
 
         motif = self.entree_motif.get().strip() or "Avance sur salaire"
 
-        ok, msg, numero = ajouter_avance(self.personnel_id, montant, motif)
+        # === MODE CREATION ===
+        if not self.mode_edition:
+            ok, msg, numero = ajouter_avance(self.personnel_id, montant, motif)
+            if ok:
+                messagebox.showinfo(
+                    "Avance enregistree",
+                    f"Numero : {numero}\n\n"
+                    f"Montant : {format_montant(montant)}\n"
+                    f"Employe : {self.personnel_nom}"
+                )
+                if self.on_save:
+                    self.on_save()
+                self.destroy()
+            else:
+                messagebox.showerror("Erreur", msg)
+            return
 
-        if ok:
-            messagebox.showinfo(
-                "Avance enregistree",
-                f"Numero : {numero}\n\n"
-                f"Montant : {format_montant(montant)}\n"
-                f"Employe : {self.personnel_nom}"
+        # === MODE EDITION ===
+        # Verifier que le nouveau montant >= deja deduit
+        deja_deduit = self.avance.get("montant_deduit", 0) or 0
+        if montant < deja_deduit - 0.01:
+            messagebox.showerror(
+                "Erreur",
+                f"Le montant ne peut pas etre inferieur a ce qui a deja "
+                f"ete deduit ({format_montant(deja_deduit)})."
             )
+            return
+
+        # Date
+        date_av = self.entree_date.get().strip()
+        try:
+            datetime.strptime(date_av, "%Y-%m-%d")
+        except ValueError:
+            messagebox.showerror(
+                "Erreur",
+                "Date invalide. Format attendu : AAAA-MM-JJ\n"
+                "Exemple : 2026-09-23"
+            )
+            return
+
+        ok, msg = modifier_avance(self.avance["id"], montant, motif, date_av)
+        if ok:
+            messagebox.showinfo("Succes", "Avance modifiee.")
             if self.on_save:
                 self.on_save()
             self.destroy()

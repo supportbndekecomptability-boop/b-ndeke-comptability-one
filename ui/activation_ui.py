@@ -1,5 +1,7 @@
 """
-Ecran d'activation de la licence - 3 etapes
+Ecran d'activation de la licence - 2 etapes SIMPLIFIEES
+L'ecole saisit directement son email + son code
+Limite : 3 machines par code (via Google Sheets)
 """
 import customtkinter as ctk
 from tkinter import messagebox
@@ -8,8 +10,9 @@ from config import (
     VENDEUR_EMAIL,
 )
 from core.licence import (
-    verifier_cle, enregistrer_licence, enregistrer_date_activation,
-    envoyer_demande_code, envoyer_confirmation_activation,
+    activer_licence_avec_serveur,
+    envoyer_demande_code,
+    envoyer_confirmation_activation,
 )
 
 
@@ -25,14 +28,20 @@ class ActivationWindow(ctk.CTk):
         self.infos_ecole = {}
 
         self.title(f"{APP_NAME} - Activation")
-        largeur = 640
-        hauteur = 700
+
+        # Adapter a la taille de l'ecran
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+
+        largeur = min(600, sw - 40)
+        hauteur = min(640, sh - 60)
+
         self.geometry(f"{largeur}x{hauteur}")
         self.configure(fg_color="#F5F7FB")
         self.resizable(False, False)
 
-        x = (self.winfo_screenwidth() // 2) - (largeur // 2)
-        y = max(10, (self.winfo_screenheight() // 2) - (hauteur // 2))
+        x = (sw // 2) - (largeur // 2)
+        y = max(5, (sh // 2) - (hauteur // 2) - 20)
         self.geometry(f"{largeur}x{hauteur}+{x}+{y}")
 
         self.bind("<Escape>", lambda e: self._quitter())
@@ -40,167 +49,204 @@ class ActivationWindow(ctk.CTk):
         self.conteneur = ctk.CTkFrame(self, fg_color="transparent")
         self.conteneur.pack(fill="both", expand=True)
 
-        self._afficher_etape_1()
+        self._afficher_etape_activation()
 
     # =========================================================
-    # ETAPE 1
+    # ETAPE 1 : ACTIVATION
     # =========================================================
-    def _afficher_etape_1(self):
+    def _afficher_etape_activation(self):
         self._vider_conteneur()
 
         card = ctk.CTkFrame(self.conteneur, fg_color="white", corner_radius=15)
-        card.pack(fill="both", expand=True, padx=20, pady=20)
+        card.pack(fill="both", expand=True, padx=15, pady=15)
 
         ctk.CTkLabel(
             card, text="B-NDEKE",
-            font=("Segoe UI", 30, "bold"),
+            font=("Segoe UI", 24, "bold"),
             text_color=COLOR_NAVY,
-        ).pack(pady=(25, 0))
+        ).pack(pady=(12, 0))
 
         ctk.CTkLabel(
             card, text="Comptability One",
-            font=("Segoe UI", 15, "bold"),
+            font=("Segoe UI", 12, "bold"),
             text_color=COLOR_GOLD,
-        ).pack(pady=(0, 3))
+        ).pack(pady=(0, 2))
 
         ctk.CTkLabel(
             card, text=f"Version {APP_VERSION}",
-            font=("Segoe UI", 10),
+            font=("Segoe UI", 9),
             text_color="#999999",
-        ).pack(pady=(0, 12))
+        ).pack(pady=(0, 6))
 
-        ctk.CTkFrame(card, fg_color="#e0e0e0", height=1).pack(fill="x", padx=40, pady=5)
+        ctk.CTkFrame(card, fg_color="#e0e0e0", height=1).pack(fill="x", padx=40, pady=3)
 
         ctk.CTkLabel(
-            card, text="ETAPE 1 : DEMANDE DE CODE",
-            font=("Segoe UI", 14, "bold"),
+            card, text="ACTIVATION",
+            font=("Segoe UI", 13, "bold"),
             text_color=COLOR_NAVY,
-        ).pack(pady=(12, 5))
+        ).pack(pady=(8, 3))
 
         ctk.CTkLabel(
             card,
-            text="Entrez votre adresse email pour demander votre code",
-            font=("Segoe UI", 11),
+            text="Entrez votre email et votre code d'activation",
+            font=("Segoe UI", 10),
             text_color="#666666",
-        ).pack(pady=(0, 15))
+        ).pack(pady=(0, 8))
 
         ctk.CTkLabel(
-            card, text="Votre adresse email",
-            font=("Segoe UI", 12, "bold"),
+            card, text="Adresse email de l'ecole",
+            font=("Segoe UI", 10, "bold"),
             text_color="#333333",
             anchor="w",
-        ).pack(padx=50, pady=(0, 5), fill="x")
+        ).pack(padx=40, pady=(0, 3), fill="x")
 
         self.entree_email = ctk.CTkEntry(
             card,
-            font=("Segoe UI", 13),
-            height=42,
+            font=("Segoe UI", 11),
+            height=34,
             placeholder_text="exemple@ecole.com",
         )
-        self.entree_email.pack(padx=50, pady=(0, 10), fill="x")
-        self.entree_email.bind("<Return>", lambda e: self._envoyer_demande())
+        self.entree_email.pack(padx=40, pady=(0, 8), fill="x")
+
+        ctk.CTkLabel(
+            card, text="Code d'activation",
+            font=("Segoe UI", 10, "bold"),
+            text_color="#333333",
+            anchor="w",
+        ).pack(padx=40, pady=(0, 3), fill="x")
+
+        self.entree_cle = ctk.CTkEntry(
+            card,
+            font=("Consolas", 12, "bold"),
+            height=36,
+            placeholder_text="BNDEKE-XXXXX-YYYYMMDD-XXXXXXXX",
+        )
+        self.entree_cle.pack(padx=40, pady=(0, 6), fill="x")
+        self.entree_cle.bind("<Return>", lambda e: self._activer())
 
         ctk.CTkButton(
             card,
-            text="DEMANDER LE CODE",
-            font=("Segoe UI", 14, "bold"),
+            text="ACTIVER",
+            font=("Segoe UI", 12, "bold"),
             fg_color=COLOR_NAVY,
             hover_color="#1a3d75",
-            height=48,
-            command=self._envoyer_demande,
-        ).pack(padx=50, pady=(5, 15), fill="x")
+            height=38,
+            command=self._activer,
+        ).pack(padx=40, pady=(8, 6), fill="x")
 
-        self.label_message_1 = ctk.CTkLabel(
+        self.label_message = ctk.CTkLabel(
             card, text="",
-            font=("Segoe UI", 11),
+            font=("Segoe UI", 9),
             text_color="#666666",
-            wraplength=520,
+            wraplength=500,
             justify="left",
         )
-        self.label_message_1.pack(padx=50, pady=(0, 10))
+        self.label_message.pack(padx=40, pady=(0, 4))
 
-        # ===== SECTION CONTACT EMAIL UNIQUEMENT =====
-        contact_frame = ctk.CTkFrame(card, fg_color="#F0F7FF", corner_radius=10)
-        contact_frame.pack(fill="x", padx=50, pady=(5, 10))
+        ctk.CTkFrame(card, fg_color="#e0e0e0", height=1).pack(fill="x", padx=40, pady=3)
+
+        ctk.CTkLabel(
+            card,
+            text="Vous n'avez pas encore de code ?",
+            font=("Segoe UI", 9, "bold"),
+            text_color="#666666",
+        ).pack(pady=(4, 3))
+
+        ctk.CTkButton(
+            card,
+            text="Demander un code d'activation",
+            font=("Segoe UI", 10),
+            fg_color="#3498db",
+            hover_color="#2980b9",
+            height=30,
+            command=self._demander_code,
+        ).pack(padx=40, pady=(0, 6), fill="x")
+
+        contact_frame = ctk.CTkFrame(card, fg_color="#F0F7FF", corner_radius=8)
+        contact_frame.pack(fill="x", padx=40, pady=(3, 6))
 
         ctk.CTkLabel(
             contact_frame,
-            text="Si vous ne recevez rien, contactez-nous par email :",
-            font=("Segoe UI", 11, "bold"),
+            text="Contact support :",
+            font=("Segoe UI", 9, "bold"),
             text_color=COLOR_NAVY,
-        ).pack(padx=15, pady=(12, 6), anchor="w")
-
-        ligne_email = ctk.CTkFrame(contact_frame, fg_color="transparent")
-        ligne_email.pack(fill="x", padx=15, pady=(0, 8))
-
-        ctk.CTkLabel(
-            ligne_email,
-            text="Email :",
-            font=("Segoe UI", 11, "bold"),
-            text_color="#333333",
-            width=60,
-            anchor="w",
-        ).pack(side="left")
+        ).pack(padx=12, pady=(5, 2), anchor="w")
 
         self.champ_email_contact = ctk.CTkEntry(
-            ligne_email,
-            font=("Consolas", 12),
-            height=32,
+            contact_frame,
+            font=("Consolas", 10),
+            height=24,
             fg_color="white",
             text_color="#0066CC",
         )
-        self.champ_email_contact.pack(side="left", fill="x", expand=True, padx=(5, 0))
+        self.champ_email_contact.pack(fill="x", padx=12, pady=(0, 5))
         self.champ_email_contact.insert(0, VENDEUR_EMAIL)
         self.champ_email_contact.configure(state="readonly")
 
         ctk.CTkButton(
-            contact_frame,
-            text="Copier l'adresse email",
-            font=("Segoe UI", 11, "bold"),
-            fg_color="#3498db",
-            hover_color="#2980b9",
-            height=34,
-            command=self._copier_email,
-        ).pack(padx=15, pady=(0, 12), fill="x")
-
-        ctk.CTkButton(
             card,
             text="Quitter",
-            font=("Segoe UI", 11),
+            font=("Segoe UI", 10),
             fg_color="#e0e0e0",
             text_color="#333333",
             hover_color="#c0c0c0",
-            height=30,
+            height=26,
             command=self._quitter,
-        ).pack(padx=50, pady=(5, 20), fill="x")
+        ).pack(padx=40, pady=(3, 10), fill="x")
 
         self.after(300, lambda: self.entree_email.focus_set())
 
-    def _copier_email(self):
-        try:
-            self.clipboard_clear()
-            self.clipboard_append(VENDEUR_EMAIL)
-            self.update()
-            self.label_message_1.configure(
-                text="Adresse email copiee ! Collez-la dans votre messagerie.",
-                text_color="#27ae60",
-            )
-        except Exception:
-            pass
-
-    def _envoyer_demande(self):
-        email = self.entree_email.get().strip()
+    def _activer(self):
+        email = self.entree_email.get().strip().lower()
+        cle = self.entree_cle.get().strip().upper()
 
         if not email or "@" not in email or "." not in email:
-            self.label_message_1.configure(
+            self.label_message.configure(
                 text="Veuillez saisir une adresse email valide.",
                 text_color="#e74c3c",
             )
             return
 
-        self.email_client = email
+        if not cle:
+            self.label_message.configure(
+                text="Veuillez coller votre code d'activation.",
+                text_color="#e74c3c",
+            )
+            return
 
-        self.label_message_1.configure(
+        self.email_client = email
+        self.label_message.configure(
+            text="Verification en cours...",
+            text_color="#3498db",
+        )
+        self.update()
+
+        try:
+            ok, message, info = activer_licence_avec_serveur(cle, email)
+        except Exception as e:
+            ok = False
+            message = f"Erreur inattendue : {e}"
+
+        if ok:
+            self.cle_utilisee = cle
+            self.label_message.configure(text=message, text_color="#27ae60")
+            self.update()
+            self.after(1200, self._afficher_etape_ecole)
+        else:
+            self.label_message.configure(text=message, text_color="#e74c3c")
+
+    def _demander_code(self):
+        email = self.entree_email.get().strip().lower()
+
+        if not email or "@" not in email or "." not in email:
+            self.label_message.configure(
+                text="Saisissez d'abord votre adresse email ci-dessus.",
+                text_color="#e67e22",
+            )
+            return
+
+        self.email_client = email
+        self.label_message.configure(
             text="Envoi de la demande en cours...",
             text_color="#3498db",
         )
@@ -212,175 +258,56 @@ class ActivationWindow(ctk.CTk):
             ok = False
 
         if ok:
-            self.label_message_1.configure(
-                text="Demande envoyee. Vous recevrez votre code par email.",
+            self.label_message.configure(
+                text="Demande envoyee !\n"
+                     "Vous recevrez votre code par email ou WhatsApp.",
                 text_color="#27ae60",
             )
-            self.after(900, self._afficher_etape_2)
         else:
-            self.label_message_1.configure(
-                text="Cliquez sur 'Copier l'adresse email' et envoyez-nous\n"
-                     "un message directement.",
+            self.label_message.configure(
+                text=f"Envoyez un email a {VENDEUR_EMAIL}\n"
+                     f"en indiquant : {email}",
                 text_color="#e67e22",
             )
-            self.after(900, self._afficher_etape_2)
 
     # =========================================================
-    # ETAPE 2
+    # ETAPE 2 : INFORMATIONS DE L'ECOLE
     # =========================================================
-    def _afficher_etape_2(self):
+    def _afficher_etape_ecole(self):
         self._vider_conteneur()
 
         card = ctk.CTkFrame(self.conteneur, fg_color="white", corner_radius=15)
-        card.pack(fill="both", expand=True, padx=20, pady=20)
+        card.pack(fill="both", expand=True, padx=15, pady=15)
 
         ctk.CTkLabel(
             card, text="B-NDEKE",
-            font=("Segoe UI", 30, "bold"),
+            font=("Segoe UI", 22, "bold"),
             text_color=COLOR_NAVY,
-        ).pack(pady=(25, 0))
+        ).pack(pady=(10, 0))
 
         ctk.CTkLabel(
             card, text="Comptability One",
-            font=("Segoe UI", 15, "bold"),
+            font=("Segoe UI", 11, "bold"),
             text_color=COLOR_GOLD,
-        ).pack(pady=(0, 12))
+        ).pack(pady=(0, 6))
 
-        ctk.CTkFrame(card, fg_color="#e0e0e0", height=1).pack(fill="x", padx=40, pady=5)
-
-        ctk.CTkLabel(
-            card, text="ETAPE 2 : ACTIVATION",
-            font=("Segoe UI", 14, "bold"),
-            text_color=COLOR_NAVY,
-        ).pack(pady=(12, 5))
+        ctk.CTkFrame(card, fg_color="#e0e0e0", height=1).pack(fill="x", padx=40, pady=3)
 
         ctk.CTkLabel(
-            card,
-            text="Collez ici la cle d'activation recue",
-            font=("Segoe UI", 11),
-            text_color="#666666",
-        ).pack(pady=(0, 15))
-
-        info_email = ctk.CTkFrame(card, fg_color="#F0FFF4", corner_radius=8)
-        info_email.pack(fill="x", padx=50, pady=(0, 15))
-
-        ctk.CTkLabel(
-            info_email,
-            text=f"Demande envoyee depuis : {self.email_client}",
-            font=("Segoe UI", 10),
-            text_color="#2d7a2d",
-        ).pack(padx=15, pady=8)
-
-        ctk.CTkLabel(
-            card, text="Cle d'activation",
+            card, text="INFORMATIONS DE L'ECOLE",
             font=("Segoe UI", 12, "bold"),
-            text_color="#333333",
-            anchor="w",
-        ).pack(padx=50, pady=(0, 5), fill="x")
-
-        self.entree_cle = ctk.CTkEntry(
-            card,
-            font=("Consolas", 14, "bold"),
-            height=46,
-            placeholder_text="BNDEKE-XXXXX-YYYYMMDD-XXXXXXXX",
-        )
-        self.entree_cle.pack(padx=50, pady=(0, 10), fill="x")
-        self.entree_cle.bind("<Return>", lambda e: self._activer_cle())
-
-        self.label_message_2 = ctk.CTkLabel(
-            card, text="",
-            font=("Segoe UI", 11),
-            text_color="#666666",
-            wraplength=520,
-            justify="left",
-        )
-        self.label_message_2.pack(padx=50, pady=(0, 15))
-
-        ctk.CTkButton(
-            card,
-            text="ACTIVER",
-            font=("Segoe UI", 14, "bold"),
-            fg_color=COLOR_NAVY,
-            hover_color="#1a3d75",
-            height=48,
-            command=self._activer_cle,
-        ).pack(padx=50, pady=(5, 15), fill="x")
-
-        ctk.CTkButton(
-            card,
-            text="Retour",
-            font=("Segoe UI", 11),
-            fg_color="#e0e0e0",
-            text_color="#333333",
-            hover_color="#c0c0c0",
-            height=30,
-            command=self._afficher_etape_1,
-        ).pack(padx=50, pady=(0, 20), fill="x")
-
-        self.after(300, lambda: self.entree_cle.focus_set())
-
-    def _activer_cle(self):
-        cle = self.entree_cle.get().strip().upper()
-
-        if not cle:
-            self.label_message_2.configure(
-                text="Veuillez coller votre cle d'activation.",
-                text_color="#e74c3c",
-            )
-            return
-
-        ok, message, info = verifier_cle(cle)
-
-        if ok:
-            self.cle_utilisee = cle
-            enregistrer_licence(cle)
-            enregistrer_date_activation()
-
-            self.label_message_2.configure(text=message, text_color="#27ae60")
-            self.update()
-
-            self.after(800, self._afficher_etape_3)
-        else:
-            self.label_message_2.configure(text=message, text_color="#e74c3c")
-
-    # =========================================================
-    # ETAPE 3
-    # =========================================================
-    def _afficher_etape_3(self):
-        self._vider_conteneur()
-
-        card = ctk.CTkFrame(self.conteneur, fg_color="white", corner_radius=15)
-        card.pack(fill="both", expand=True, padx=20, pady=20)
-
-        ctk.CTkLabel(
-            card, text="B-NDEKE",
-            font=("Segoe UI", 30, "bold"),
             text_color=COLOR_NAVY,
-        ).pack(pady=(20, 0))
-
-        ctk.CTkLabel(
-            card, text="Comptability One",
-            font=("Segoe UI", 15, "bold"),
-            text_color=COLOR_GOLD,
-        ).pack(pady=(0, 12))
-
-        ctk.CTkFrame(card, fg_color="#e0e0e0", height=1).pack(fill="x", padx=40, pady=5)
-
-        ctk.CTkLabel(
-            card, text="ETAPE 3 : INFORMATIONS DE L'ECOLE",
-            font=("Segoe UI", 14, "bold"),
-            text_color=COLOR_NAVY,
-        ).pack(pady=(12, 5))
+        ).pack(pady=(8, 3))
 
         ctk.CTkLabel(
             card,
             text="Remplissez les informations de votre etablissement",
-            font=("Segoe UI", 11),
+            font=("Segoe UI", 9),
             text_color="#666666",
-        ).pack(pady=(0, 12))
+        ).pack(pady=(0, 6))
 
         zone = ctk.CTkScrollableFrame(card, fg_color="transparent", corner_radius=0)
-        zone.pack(fill="both", expand=True, padx=20, pady=5)
+        zone.pack(fill="both", expand=True, padx=15, pady=3)
 
         self.champs_ecole = {}
 
@@ -388,75 +315,105 @@ class ActivationWindow(ctk.CTk):
             zone, "Nom de l'ecole *",
             placeholder="Ex: Ecole Les Petits Genies"
         )
-
         self.champs_ecole["adresse"] = self._ajouter_champ(
             zone, "Adresse",
             placeholder="Ex: 15 Avenue de la Paix"
         )
-
         self.champs_ecole["ville"] = self._ajouter_champ(
             zone, "Ville / Province",
             placeholder="Ex: Kinshasa"
         )
-
         self.champs_ecole["pays"] = self._ajouter_champ(
             zone, "Pays",
             placeholder="Ex: RDC",
             valeur="RDC"
         )
-
         self.champs_ecole["telephone"] = self._ajouter_champ(
             zone, "Telephone",
             placeholder="Ex: +243 812 345 678"
         )
-
         self.champs_ecole["email"] = self._ajouter_champ(
             zone, "Email de l'ecole",
             placeholder="Ex: contact@ecole.com"
         )
-
         self.champs_ecole["directeur"] = self._ajouter_champ(
             zone, "Nom du directeur / responsable",
-            placeholder="Ex: M. Jean KABILA"
+            placeholder="Ex: M. Jacques "
         )
+
+        # ===== SECTION SECURITE / SAUVEGARDE CLOUD =====
+        ctk.CTkFrame(zone, fg_color="#e0e0e0", height=1).pack(fill="x", padx=10, pady=(10, 6))
+
+        ctk.CTkLabel(
+            zone,
+            text="SECURITE DES DONNEES",
+            font=("Segoe UI", 10, "bold"),
+            text_color=COLOR_NAVY,
+        ).pack(padx=10, pady=(3, 3), anchor="w")
+
+        self.var_cloud = ctk.StringVar(value="1")
+
+        ctk.CTkCheckBox(
+            zone,
+            text="Activer la sauvegarde cloud securisee (recommande)",
+            variable=self.var_cloud,
+            onvalue="1",
+            offvalue="0",
+            font=("Segoe UI", 9, "bold"),
+        ).pack(padx=15, pady=(3, 4), anchor="w")
+
+        ctk.CTkLabel(
+            zone,
+            text=(
+                "Vos donnees seront sauvegardees de maniere CHIFFREE sur le "
+                "serveur B-NDEKE pour prevenir toute perte (panne, vol, etc.). "
+                "Vous pouvez desactiver cette option a tout moment dans "
+                "Parametres. B-NDEKE ne consultera jamais vos donnees sans "
+                "votre autorisation ecrite."
+            ),
+            font=("Segoe UI", 8),
+            text_color="#666666",
+            wraplength=480,
+            justify="left",
+        ).pack(padx=15, pady=(0, 6), anchor="w")
 
         self.label_message_3 = ctk.CTkLabel(
             card, text="",
-            font=("Segoe UI", 11),
+            font=("Segoe UI", 9),
             text_color="#666666",
-            wraplength=520,
+            wraplength=500,
             justify="left",
         )
-        self.label_message_3.pack(padx=50, pady=(5, 10))
+        self.label_message_3.pack(padx=40, pady=(3, 6))
 
         ctk.CTkButton(
             card,
             text="TERMINER",
-            font=("Segoe UI", 14, "bold"),
+            font=("Segoe UI", 12, "bold"),
             fg_color="#27ae60",
             hover_color="#229954",
-            height=48,
+            height=38,
             command=self._terminer,
-        ).pack(padx=50, pady=(5, 20), fill="x")
+        ).pack(padx=40, pady=(3, 10), fill="x")
 
         self.after(300, lambda: self.champs_ecole["nom"].focus_set())
 
     def _ajouter_champ(self, parent, label, placeholder="", valeur=""):
         ctk.CTkLabel(
             parent, text=label,
-            font=("Segoe UI", 11, "bold"),
+            font=("Segoe UI", 9, "bold"),
             text_color="#333333", anchor="w",
-        ).pack(padx=10, pady=(6, 3), fill="x")
+        ).pack(padx=10, pady=(4, 2), fill="x")
 
         entree = ctk.CTkEntry(
             parent,
-            font=("Segoe UI", 12),
-            height=38,
+            font=("Segoe UI", 10),
+            height=30,
             placeholder_text=placeholder,
         )
         if valeur:
             entree.insert(0, valeur)
-        entree.pack(padx=10, pady=(0, 5), fill="x")
+        entree.pack(padx=10, pady=(0, 3), fill="x")
         return entree
 
     def _terminer(self):
@@ -497,6 +454,30 @@ class ActivationWindow(ctk.CTk):
         except Exception:
             pass
 
+        # ===== SAUVEGARDE CLOUD (OPT-IN) =====
+        try:
+            from core.backup_cloud import (
+                activer_sauvegarde_cloud,
+                marquer_acceptation_cloud,
+                sauvegarder_dans_cloud,
+            )
+            cloud_actif = (self.var_cloud.get() == "1")
+            activer_sauvegarde_cloud(cloud_actif)
+            if cloud_actif:
+                marquer_acceptation_cloud()
+                self.label_message_3.configure(
+                    text="Sauvegarde cloud en cours...",
+                    text_color="#3498db",
+                )
+                self.update()
+                try:
+                    ok_bk, msg_bk = sauvegarder_dans_cloud()
+                    print(f"[BACKUP] {msg_bk}")
+                except Exception as e:
+                    print(f"[BACKUP] Ignore : {e}")
+        except Exception as e:
+            print(f"[BACKUP] Erreur activation cloud : {e}")
+
         try:
             envoyer_confirmation_activation(
                 self.email_client,
@@ -519,9 +500,6 @@ class ActivationWindow(ctk.CTk):
         )
         self.destroy()
 
-    # =========================================================
-    # OUTILS
-    # =========================================================
     def _vider_conteneur(self):
         for w in self.conteneur.winfo_children():
             w.destroy()
