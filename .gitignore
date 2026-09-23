@@ -1,0 +1,16 @@
+config.py
+data/b_ndeke.db
+data/*.db
+data/recus/
+data/rapports/
+data/exports/
+data/backups/
+data/logos/
+build/
+dist/
+installer_output/
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+*.sublime-*
