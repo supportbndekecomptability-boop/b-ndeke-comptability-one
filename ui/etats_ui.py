@@ -1,5 +1,7 @@
 """
 Interface Etats financiers SYSCOHADA
+Permissions : tous les roles (sauf caissier) peuvent generer les etats.
+              Bilan initial et Suivi budgetaire : admin/gestionnaire uniquement.
 """
 from datetime import datetime
 import os
@@ -7,6 +9,8 @@ import customtkinter as ctk
 from tkinter import messagebox
 from config import COLOR_NAVY, COLOR_GOLD, format_montant, DATA_DIR
 
+from ui.permissions_ui import peut
+from core.permissions import get_role
 from core.etats_financiers import (
     etat_journal, etat_grand_livre, etat_balance,
     etat_compte_resultat, etat_bilan, etat_tresorerie,
@@ -27,21 +31,50 @@ class EtatsPage(ctk.CTkFrame):
     def __init__(self, parent, utilisateur=None):
         super().__init__(parent, fg_color="transparent")
 
-        self.utilisateur = utilisateur
+        self.utilisateur = utilisateur or {}
 
         self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.scroll.pack(fill="both", expand=True)
 
         self._construire_interface()
 
+    # ================== PERMISSIONS ==================
+    def _peut_gerer_bilan_initial(self):
+        """Bilan initial et Suivi budgetaire : admin/gestionnaire uniquement."""
+        return (peut(self.utilisateur, "peut_gerer_utilisateurs")
+                or peut(self.utilisateur, "peut_gerer_permissions"))
+
     # ================== INTERFACE ==================
     def _construire_interface(self):
+        # ===== EN-TETE =====
+        ligne_top = ctk.CTkFrame(self.scroll, fg_color="transparent")
+        ligne_top.pack(fill="x", pady=(0, 5))
+
         ctk.CTkLabel(
-            self.scroll,
+            ligne_top,
             text="Etats financiers SYSCOHADA",
             font=("Segoe UI", 22, "bold"),
             text_color=COLOR_NAVY,
-        ).pack(anchor="w", pady=(0, 5))
+        ).pack(side="left")
+
+        # Badge role
+        role = get_role(self.utilisateur)
+        if role in ("admin", "gestionnaire"):
+            info_role = "Vue : acces complet"
+            couleur_role = "#27ae60"
+        elif role == "comptable":
+            info_role = "Vue : acces complet"
+            couleur_role = "#e67e22"
+        else:
+            info_role = "Vue : lecture seule"
+            couleur_role = "#3498db"
+
+        ctk.CTkLabel(
+            ligne_top,
+            text=info_role,
+            font=("Segoe UI", 10, "italic"),
+            text_color=couleur_role,
+        ).pack(side="right", pady=(8, 0))
 
         ctk.CTkLabel(
             self.scroll,
@@ -180,23 +213,23 @@ class EtatsPage(ctk.CTkFrame):
             on_generer=self._generer_tresorerie,
         )
 
-        # ===== BILAN INITIAL =====
-        self._creer_carte(
-            grid, 2, 0,
-            titre="Bilan initial",
-            description="Situation de depart de l'ecole. Affiche les comptes saisis dans Parametres > Bilan initial.",
-            couleur="#8e44ad",
-            on_generer=self._afficher_bilan_initial,
-        )
+        # ===== BILAN INITIAL + SUIVI BUDGETAIRE (admin/gestionnaire uniquement) =====
+        if self._peut_gerer_bilan_initial():
+            self._creer_carte(
+                grid, 2, 0,
+                titre="Bilan initial",
+                description="Situation de depart de l'ecole. Affiche les comptes saisis dans Parametres > Bilan initial.",
+                couleur="#8e44ad",
+                on_generer=self._afficher_bilan_initial,
+            )
 
-        # ===== SUIVI BUDGETAIRE =====
-        self._creer_carte(
-            grid, 2, 1,
-            titre="Suivi budgetaire",
-            description="Comparaison Prevu / Reel / Ecart pour chaque budget et chaque sous-categorie.",
-            couleur="#16a085",
-            on_generer=self._afficher_suivi_budgetaire,
-        )
+            self._creer_carte(
+                grid, 2, 1,
+                titre="Suivi budgetaire",
+                description="Comparaison Prevu / Reel / Ecart pour chaque budget et chaque sous-categorie.",
+                couleur="#16a085",
+                on_generer=self._afficher_suivi_budgetaire,
+            )
 
     def _creer_carte(self, parent, row, col, titre, description, couleur, on_generer):
         carte = ctk.CTkFrame(parent, fg_color="white", corner_radius=12,
@@ -348,6 +381,10 @@ class EtatsPage(ctk.CTkFrame):
 
     # ================== BILAN INITIAL ==================
     def _afficher_bilan_initial(self):
+        if not self._peut_gerer_bilan_initial():
+            messagebox.showerror("Acces refuse",
+                                 "Seul un administrateur peut voir le bilan initial.")
+            return
         try:
             data = get_bilan_initial()
 
@@ -367,6 +404,10 @@ class EtatsPage(ctk.CTkFrame):
 
     # ================== SUIVI BUDGETAIRE ==================
     def _afficher_suivi_budgetaire(self):
+        if not self._peut_gerer_bilan_initial():
+            messagebox.showerror("Acces refuse",
+                                 "Seul un administrateur peut voir le suivi budgetaire.")
+            return
         try:
             SuiviBudgetaireWindow(self)
         except Exception as e:
@@ -376,7 +417,7 @@ class EtatsPage(ctk.CTkFrame):
 
 
 # ============================================================
-# FENETRE D'AFFICHAGE DU BILAN INITIAL
+# FENETRE D'AFFICHAGE DU BILAN INITIAL (inchangee)
 # ============================================================
 class BilanInitialViewer(ctk.CTkToplevel):
     def __init__(self, parent, data):
@@ -556,7 +597,6 @@ class BilanInitialViewer(ctk.CTkToplevel):
             width=130, anchor="e",
         ).pack(side="right")
 
-    # ================== EXPORT PDF ==================
     def _export_pdf(self):
         try:
             from reportlab.lib.pagesizes import A4

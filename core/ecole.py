@@ -181,3 +181,24 @@ def get_info_ecole_pour_pdf():
     info = get_info_ecole()
     info["logo_path"] = get_logo_path()  # None si pas de logo
     return info
+
+# ============================================================
+# PAYS DE L'ECOLE (stocke dans parametres clé/valeur)
+# ============================================================
+def get_pays_ecole():
+    """Retourne le pays enregistre par l'ecole."""
+    try:
+        from core.parametres import get_parametre
+        return get_parametre("ecole_pays") or ""
+    except Exception:
+        return ""
+
+
+def set_pays_ecole(pays):
+    """Enregistre le pays de l'ecole."""
+    try:
+        from core.parametres import set_parametre
+        set_parametre("ecole_pays", pays or "")
+        return True, "Pays enregistre"
+    except Exception as e:
+        return False, f"Erreur : {e}"

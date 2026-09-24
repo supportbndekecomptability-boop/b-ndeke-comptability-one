@@ -26,9 +26,36 @@ def _token_utilisateur(user):
     return hashlib.sha256(base.encode("utf-8")).hexdigest()
 
 
+def _normaliser_user(user):
+    """
+    Normalise user : accepte un dict OU un tuple (ok, dict, msg).
+    Retourne le dict ou None.
+    """
+    if user is None:
+        return None
+    if isinstance(user, dict):
+        return user
+    if isinstance(user, tuple):
+        for item in user:
+            if isinstance(item, dict):
+                return item
+    return None
+
+
 def sauvegarder_session(user):
     """Sauvegarde la session apres connexion reussie."""
     try:
+        user = _normaliser_user(user)
+        if not user:
+            print("[SESSION] Erreur sauvegarde : utilisateur invalide")
+            return False
+
+        # Verifier que les champs obligatoires existent
+        for champ in ("id", "email", "nom_complet", "role"):
+            if champ not in user:
+                print(f"[SESSION] Erreur sauvegarde : champ '{champ}' manquant")
+                return False
+
         _dossier_session()
         expire = None
         if DUREE_SESSION_JOURS > 0:

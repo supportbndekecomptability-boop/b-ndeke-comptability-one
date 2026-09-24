@@ -1,7 +1,13 @@
 """
 Gestion du personnel de B-NDEKE Comptability One
+Avec champ 'niveau' (Maternelle / Primaire / Secondaire) pour le filtrage
+par role (Directeur = Maternelle + Primaire, Prefet = Secondaire).
 """
 from database import get_connection
+
+
+# Niveaux valides pour le personnel
+NIVEAUX_PERSONNEL = ["Maternelle", "Primaire", "Secondaire", None]
 
 
 def generer_code():
@@ -16,19 +22,24 @@ def generer_code():
 
 def ajouter_personnel(code, nom, prenom, fonction, sexe=None,
                       telephone=None, email=None, salaire_mensuel=0,
-                      duree_contrat_mois=12, date_embauche=None):
+                      duree_contrat_mois=12, date_embauche=None,
+                      niveau=None):
+    """
+    Ajoute un membre du personnel.
+    niveau : 'Maternelle', 'Primaire', 'Secondaire' ou None
+    """
     conn = get_connection()
     cursor = conn.cursor()
     try:
         cursor.execute("""
             INSERT INTO personnel
                 (code, nom, prenom, fonction, sexe, telephone, email,
-                 salaire_mensuel, duree_contrat_mois, date_embauche)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 salaire_mensuel, duree_contrat_mois, date_embauche, niveau)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (code.strip().upper(), nom.strip().upper(), prenom.strip().capitalize(),
               fonction.strip(), sexe, telephone, email,
               float(salaire_mensuel or 0), int(duree_contrat_mois or 12),
-              date_embauche))
+              date_embauche, niveau))
         conn.commit()
         return True, "Personnel ajoute avec succes"
     except Exception as e:
@@ -40,7 +51,7 @@ def ajouter_personnel(code, nom, prenom, fonction, sexe=None,
 
 
 def lister_personnel(recherche=""):
-    """Liste le personnel + engagement total + solde a payer
+    """Liste le personnel + engagement total + solde a payer + niveau
     Engagement total = salaire_mensuel x duree_contrat_mois
     Solde a payer = engagement total - total deja paye
     """
@@ -50,7 +61,7 @@ def lister_personnel(recherche=""):
     base_query = """
         SELECT p.id, p.code, p.nom, p.prenom, p.fonction, p.sexe,
                p.telephone, p.email, p.salaire_mensuel, p.duree_contrat_mois,
-               p.date_embauche,
+               p.date_embauche, p.niveau,
                COALESCE(p.salaire_mensuel, 0) * COALESCE(p.duree_contrat_mois, 12)
                    as engagement_total,
                COALESCE(p.salaire_mensuel, 0) * COALESCE(p.duree_contrat_mois, 12)
@@ -91,7 +102,12 @@ def get_personnel(personnel_id):
 
 def modifier_personnel(personnel_id, code, nom, prenom, fonction, sexe=None,
                        telephone=None, email=None, salaire_mensuel=0,
-                       duree_contrat_mois=12, date_embauche=None):
+                       duree_contrat_mois=12, date_embauche=None,
+                       niveau=None):
+    """
+    Modifie un membre du personnel.
+    niveau : 'Maternelle', 'Primaire', 'Secondaire' ou None
+    """
     conn = get_connection()
     cursor = conn.cursor()
     try:
@@ -99,12 +115,12 @@ def modifier_personnel(personnel_id, code, nom, prenom, fonction, sexe=None,
             UPDATE personnel
             SET code = ?, nom = ?, prenom = ?, fonction = ?, sexe = ?,
                 telephone = ?, email = ?, salaire_mensuel = ?,
-                duree_contrat_mois = ?, date_embauche = ?
+                duree_contrat_mois = ?, date_embauche = ?, niveau = ?
             WHERE id = ?
         """, (code.strip().upper(), nom.strip().upper(), prenom.strip().capitalize(),
               fonction.strip(), sexe, telephone, email,
               float(salaire_mensuel or 0), int(duree_contrat_mois or 12),
-              date_embauche, personnel_id))
+              date_embauche, niveau, personnel_id))
         conn.commit()
         return True, "Personnel modifie avec succes"
     except Exception as e:
@@ -146,3 +162,14 @@ def rechercher_par_code(code):
     row = cursor.fetchone()
     conn.close()
     return dict(row) if row else None
+
+
+def lister_personnel_par_niveaux(niveaux):
+    """
+    Retourne le personnel dont le niveau est dans la liste donnee.
+    niveaux : liste ['Maternelle', 'Primaire'] ou None pour tout.
+    """
+    tous = lister_personnel()
+    if niveaux is None:
+        return tous
+    return [p for p in tous if p.get("niveau") in niveaux]

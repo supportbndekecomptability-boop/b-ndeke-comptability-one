@@ -1,5 +1,7 @@
 """
 Interface Rapports - Impression PDF + Envoi email
+Permissions : admin/gestionnaire peuvent configurer l'email
+              autres roles peuvent generer et envoyer les rapports
 """
 import os
 import sys
@@ -9,6 +11,8 @@ from datetime import datetime
 import customtkinter as ctk
 from tkinter import messagebox, filedialog
 from config import COLOR_NAVY, COLOR_GOLD, format_montant
+from ui.permissions_ui import peut
+from core.permissions import get_role
 from core.parametres import (
     get_config_email, set_config_email, email_est_configure,
 )
@@ -28,20 +32,49 @@ class RapportsPage(ctk.CTkFrame):
     def __init__(self, parent, utilisateur=None):
         super().__init__(parent, fg_color="transparent")
 
-        self.utilisateur = utilisateur
+        self.utilisateur = utilisateur or {}
 
         self.scroll = ctk.CTkScrollableFrame(self, fg_color="transparent")
         self.scroll.pack(fill="both", expand=True)
 
         self._construire_interface()
 
+    # ================== PERMISSIONS ==================
+    def _peut_configurer_email(self):
+        """Seul admin/gestionnaire peut configurer le serveur SMTP."""
+        return (peut(self.utilisateur, "peut_gerer_utilisateurs")
+                or peut(self.utilisateur, "peut_gerer_permissions"))
+
     # ================== INTERFACE ==================
     def _construire_interface(self):
+        # ===== EN-TETE =====
+        ligne_top = ctk.CTkFrame(self.scroll, fg_color="transparent")
+        ligne_top.pack(fill="x", pady=(0, 5))
+
         ctk.CTkLabel(
-            self.scroll, text="Rapports",
+            ligne_top, text="Rapports",
             font=("Segoe UI", 22, "bold"),
             text_color=COLOR_NAVY,
-        ).pack(anchor="w", pady=(0, 5))
+        ).pack(side="left")
+
+        # Badge role
+        role = get_role(self.utilisateur)
+        if role == "admin" or role == "gestionnaire":
+            info_role = "Vue : acces complet"
+            couleur_role = "#27ae60"
+        elif role == "comptable":
+            info_role = "Vue : acces complet"
+            couleur_role = "#e67e22"
+        else:
+            info_role = "Vue : lecture seule"
+            couleur_role = "#3498db"
+
+        ctk.CTkLabel(
+            ligne_top,
+            text=info_role,
+            font=("Segoe UI", 10, "italic"),
+            text_color=couleur_role,
+        ).pack(side="right", pady=(8, 0))
 
         ctk.CTkLabel(
             self.scroll,
@@ -50,96 +83,113 @@ class RapportsPage(ctk.CTkFrame):
             text_color="#666666",
         ).pack(anchor="w", pady=(0, 15))
 
-        # ===== CONFIGURATION EMAIL =====
-        config = get_config_email()
-        configure = email_est_configure()
+        # ===== CONFIGURATION EMAIL (visible uniquement pour admin/gestionnaire) =====
+        if self._peut_configurer_email():
+            config = get_config_email()
+            configure = email_est_configure()
 
-        dest_frame = ctk.CTkFrame(self.scroll, fg_color="white", corner_radius=10)
-        dest_frame.pack(fill="x", pady=(0, 15))
+            dest_frame = ctk.CTkFrame(self.scroll, fg_color="white", corner_radius=10)
+            dest_frame.pack(fill="x", pady=(0, 15))
 
-        ligne_titre_email = ctk.CTkFrame(dest_frame, fg_color="transparent")
-        ligne_titre_email.pack(fill="x", padx=15, pady=(10, 5))
+            ligne_titre_email = ctk.CTkFrame(dest_frame, fg_color="transparent")
+            ligne_titre_email.pack(fill="x", padx=15, pady=(10, 5))
 
-        ctk.CTkLabel(
-            ligne_titre_email,
-            text="Configuration email",
-            font=("Segoe UI", 12, "bold"),
-            text_color=COLOR_NAVY,
-        ).pack(side="left")
-
-        if configure:
             ctk.CTkLabel(
                 ligne_titre_email,
-                text=f"  Configure : {config['user']}",
-                font=("Segoe UI", 10),
-                text_color="#27ae60",
+                text="Configuration email",
+                font=("Segoe UI", 12, "bold"),
+                text_color=COLOR_NAVY,
             ).pack(side="left")
 
+            if configure:
+                ctk.CTkLabel(
+                    ligne_titre_email,
+                    text=f"  Configure : {config['user']}",
+                    font=("Segoe UI", 10),
+                    text_color="#27ae60",
+                ).pack(side="left")
+
+                ctk.CTkButton(
+                    ligne_titre_email,
+                    text="Modifier",
+                    font=("Segoe UI", 11, "bold"),
+                    fg_color="#e0e0e0",
+                    text_color="#333333",
+                    hover_color="#c0c0c0",
+                    height=30,
+                    width=100,
+                    command=self._ouvrir_config_email,
+                ).pack(side="right")
+            else:
+                ctk.CTkLabel(
+                    ligne_titre_email,
+                    text="  Non configure",
+                    font=("Segoe UI", 10),
+                    text_color="#e74c3c",
+                ).pack(side="left")
+
+                ctk.CTkButton(
+                    ligne_titre_email,
+                    text="Configurer maintenant",
+                    font=("Segoe UI", 11, "bold"),
+                    fg_color=COLOR_NAVY,
+                    hover_color="#1a3d75",
+                    height=30,
+                    width=180,
+                    command=self._ouvrir_config_email,
+                ).pack(side="right")
+
+            ctk.CTkLabel(
+                dest_frame,
+                text="Destinataires des rapports (separes par des virgules)",
+                font=("Segoe UI", 10),
+                text_color="#888888",
+            ).pack(anchor="w", padx=15, pady=(2, 5))
+
+            self.entree_destinataires = ctk.CTkEntry(
+                dest_frame,
+                font=("Segoe UI", 12),
+                height=36,
+                placeholder_text="chef@exemple.com, comptable@exemple.com",
+            )
+            self.entree_destinataires.pack(fill="x", padx=15, pady=(0, 8))
+            self.entree_destinataires.insert(0, config.get("destinataires", ""))
+
+            self.entree_destinataires.bind(
+                "<FocusOut>",
+                lambda e: self._sauvegarder_destinataires(),
+            )
+
+            ligne_smtp = ctk.CTkFrame(dest_frame, fg_color="transparent")
+            ligne_smtp.pack(fill="x", padx=15, pady=(0, 12))
+
             ctk.CTkButton(
-                ligne_titre_email,
-                text="Modifier",
-                font=("Segoe UI", 11, "bold"),
+                ligne_smtp,
+                text="Tester la configuration email",
+                font=("Segoe UI", 11),
                 fg_color="#e0e0e0",
                 text_color="#333333",
                 hover_color="#c0c0c0",
                 height=30,
-                width=100,
-                command=self._ouvrir_config_email,
+                width=220,
+                command=self._tester_smtp,
             ).pack(side="right")
         else:
+            # Pour les autres roles : juste un petit bandeau lecture seule
+            cadre_info = ctk.CTkFrame(self.scroll, fg_color="#FFF7E0", corner_radius=8)
+            cadre_info.pack(fill="x", pady=(0, 15))
             ctk.CTkLabel(
-                ligne_titre_email,
-                text="  Non configure",
+                cadre_info,
+                text=("La configuration email est reservee aux administrateurs.\n"
+                      "Vous pouvez ouvrir, imprimer et envoyer les rapports "
+                      "si la configuration est deja faite."),
                 font=("Segoe UI", 10),
-                text_color="#e74c3c",
-            ).pack(side="left")
+                text_color="#8B6914",
+                justify="left",
+            ).pack(padx=15, pady=10, anchor="w")
 
-            ctk.CTkButton(
-                ligne_titre_email,
-                text="Configurer maintenant",
-                font=("Segoe UI", 11, "bold"),
-                fg_color=COLOR_NAVY,
-                hover_color="#1a3d75",
-                height=30,
-                width=180,
-                command=self._ouvrir_config_email,
-            ).pack(side="right")
-
-        ctk.CTkLabel(
-            dest_frame,
-            text="Destinataires des rapports (separes par des virgules)",
-            font=("Segoe UI", 10),
-            text_color="#888888",
-        ).pack(anchor="w", padx=15, pady=(2, 5))
-
-        self.entree_destinataires = ctk.CTkEntry(
-            dest_frame,
-            font=("Segoe UI", 12),
-            height=36,
-            placeholder_text="chef@exemple.com, comptable@exemple.com",
-        )
-        self.entree_destinataires.pack(fill="x", padx=15, pady=(0, 8))
-        self.entree_destinataires.insert(0, config.get("destinataires", ""))
-
-        self.entree_destinataires.bind(
-            "<FocusOut>",
-            lambda e: self._sauvegarder_destinataires(),
-        )
-
-        ligne_smtp = ctk.CTkFrame(dest_frame, fg_color="transparent")
-        ligne_smtp.pack(fill="x", padx=15, pady=(0, 12))
-
-        ctk.CTkButton(
-            ligne_smtp,
-            text="Tester la configuration email",
-            font=("Segoe UI", 11),
-            fg_color="#e0e0e0",
-            text_color="#333333",
-            hover_color="#c0c0c0",
-            height=30,
-            width=220,
-            command=self._tester_smtp,
-        ).pack(side="right")
+            # Creer quand meme l'entree pour eviter les erreurs dans _get_destinataires
+            self.entree_destinataires = None
 
         # ===== RAPPORTS DISPONIBLES =====
         ctk.CTkLabel(
@@ -186,7 +236,8 @@ class RapportsPage(ctk.CTkFrame):
             on_generer=self._generer_rapport_journalier,
         )
 
-    def _creer_carte_rapport(self, parent, row, col, titre, description, couleur, on_generer):
+    def _creer_carte_rapport(self, parent, row, col, titre, description,
+                              couleur, on_generer):
         carte = ctk.CTkFrame(parent, fg_color="white", corner_radius=12,
                              border_width=2, border_color=couleur)
         carte.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
@@ -233,19 +284,31 @@ class RapportsPage(ctk.CTkFrame):
 
     # ================== ACTIONS ==================
     def _ouvrir_pdf(self, chemin, titre="Apercu du rapport"):
-        """Ouvre le PDF DANS une fenetre de l'app (pas de navigateur)"""
         try:
             PdfViewerWindow(self, chemin, titre=titre)
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible d'ouvrir le PDF : {e}")
 
     def _get_destinataires(self):
-        texte = self.entree_destinataires.get().strip()
+        if self.entree_destinataires is None:
+            # Non-admin : lire depuis la config sauvegardee
+            try:
+                config = get_config_email()
+                texte = (config.get("destinataires") or "").strip()
+            except Exception:
+                texte = ""
+        else:
+            texte = self.entree_destinataires.get().strip()
+
         if not texte:
             return []
         return [d.strip() for d in texte.split(",") if d.strip()]
 
     def _tester_smtp(self):
+        if not self._peut_configurer_email():
+            messagebox.showerror("Acces refuse",
+                                 "Seul un administrateur peut tester la configuration.")
+            return
         ok, msg = tester_configuration()
         if ok:
             messagebox.showinfo("Test Email", f"Succes\n\n{msg}")
@@ -253,13 +316,20 @@ class RapportsPage(ctk.CTkFrame):
             messagebox.showerror("Test Email", f"Echec\n\n{msg}")
 
     def _sauvegarder_destinataires(self):
+        if not self._peut_configurer_email():
+            return
         try:
             from core.parametres import set_parametre, CLE_DESTINATAIRES
-            set_parametre(CLE_DESTINATAIRES, self.entree_destinataires.get().strip())
+            set_parametre(CLE_DESTINATAIRES,
+                          self.entree_destinataires.get().strip())
         except Exception:
             pass
 
     def _ouvrir_config_email(self):
+        if not self._peut_configurer_email():
+            messagebox.showerror("Acces refuse",
+                                 "Seul un administrateur peut configurer l'email.")
+            return
         ConfigEmailWindow(self, on_save=self._recharger)
 
     def _recharger(self):
@@ -273,14 +343,16 @@ class RapportsPage(ctk.CTkFrame):
             if not destinataires:
                 messagebox.showwarning(
                     "Aucun destinataire",
-                    "Veuillez saisir au moins une adresse email."
+                    "Aucun destinataire configure.\n\n"
+                    "Contactez un administrateur pour configurer les emails."
                 )
                 return
 
             rep = messagebox.askyesno(
                 "Confirmer l'envoi",
                 f"Envoyer le rapport a :\n\n" +
-                "\n".join(f"- {d}" for d in destinataires) + "\n\nSujet : " + sujet
+                "\n".join(f"- {d}" for d in destinataires) +
+                "\n\nSujet : " + sujet
             )
             if not rep:
                 return
@@ -293,7 +365,6 @@ class RapportsPage(ctk.CTkFrame):
             else:
                 messagebox.showerror("Erreur d'envoi", msg)
         else:
-            # Ouvre le PDF DANS l'app (pas de navigateur)
             self._ouvrir_pdf(chemin, titre=sujet)
 
     # ================== RAPPORTS ==================
@@ -400,7 +471,7 @@ class RapportsPage(ctk.CTkFrame):
 
 
 # ============================================================
-# FENETRE DE CONFIGURATION EMAIL
+# FENETRE DE CONFIGURATION EMAIL (inchangee)
 # ============================================================
 class ConfigEmailWindow(ctk.CTkToplevel):
     def __init__(self, parent, on_save=None):

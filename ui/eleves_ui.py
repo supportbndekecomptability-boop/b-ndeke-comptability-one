@@ -1,6 +1,10 @@
 """
 Interface de gestion des eleves
-Avec separation frais scolaires / autres frais
+- Liste deroulante des classes (depuis le module Classes)
+- Generation automatique des frais a l'inscription
+- Fenetre adaptative aux petits ecrans
+- Matricule cliquable pour copier (utile pour le caissier)
+- Filtre par niveau : Directeur (Maternelle+Primaire), Prefet (Secondaire)
 """
 import customtkinter as ctk
 from tkinter import messagebox
@@ -9,16 +13,47 @@ from core.eleves import (
     ajouter_eleve, lister_eleves, modifier_eleve,
     supprimer_eleve, get_eleve, generer_matricule
 )
+from core.classes import lister_classes
 from ui.scroll_frame import HorizontalScrollFrame
+from ui.window_utils import setup_adaptive_window
+from ui.permissions_ui import peut, filtrer_eleves_par_niveau
+from core.permissions import niveaux_autorises
 
 
 class ElevesPage(ctk.CTkFrame):
-    def __init__(self, parent):
+    def __init__(self, parent, utilisateur=None):
         super().__init__(parent, fg_color="transparent")
 
+        self.utilisateur = utilisateur or {}
         self.eleve_selectionne = None
         self._construire_interface()
         self.rafraichir_tableau()
+
+    # ================== PERMISSIONS ==================
+    def _peut_gerer(self):
+        return peut(self.utilisateur, "peut_gerer_eleves")
+
+    def _peut_supprimer(self):
+        return peut(self.utilisateur, "peut_supprimer")
+
+    def _nb_actions(self):
+        """Calcule le nombre de boutons visibles."""
+        n = 0
+        n += 1   # Frais (toujours visible - info)
+        if self._peut_gerer():
+            n += 1   # Modifier
+        if self._peut_supprimer():
+            n += 1   # X
+        return n
+
+    def _largeur_actions(self):
+        largeur = 0
+        largeur += 64          # Frais : 60 + 2*2
+        if self._peut_gerer():
+            largeur += 69      # Modifier : 65 + 2*2
+        if self._peut_supprimer():
+            largeur += 34      # X : 30 + 2*2
+        return largeur + 10
 
     # ================== INTERFACE ==================
     def _construire_interface(self):
@@ -32,17 +67,28 @@ class ElevesPage(ctk.CTkFrame):
             text_color=COLOR_NAVY,
         ).pack(side="left")
 
-        ctk.CTkButton(
-            top,
-            text="+ Nouvel eleve",
-            font=("Segoe UI", 13, "bold"),
-            fg_color=COLOR_NAVY,
-            hover_color="#1a3d75",
-            height=40,
-            command=self._ouvrir_formulaire,
-        ).pack(side="right")
+        # Badge de niveau (Directeur / Prefet)
+        niveaux = niveaux_autorises(self.utilisateur)
+        if niveaux:
+            ctk.CTkLabel(
+                top,
+                text=" | ".join(niveaux),
+                font=("Segoe UI", 10, "bold"),
+                text_color="#8e44ad",
+            ).pack(side="left", padx=(15, 0), pady=(8, 0))
 
-        # Barre de recherche
+        # Bouton "+ Nouvel eleve" : seulement si peut_gerer_eleves
+        if self._peut_gerer():
+            ctk.CTkButton(
+                top,
+                text="+ Nouvel eleve",
+                font=("Segoe UI", 13, "bold"),
+                fg_color=COLOR_NAVY,
+                hover_color="#1a3d75",
+                height=40,
+                command=self._ouvrir_formulaire,
+            ).pack(side="right")
+
         recherche_frame = ctk.CTkFrame(self, fg_color="white", corner_radius=10)
         recherche_frame.pack(fill="x", pady=(0, 10))
 
@@ -76,19 +122,23 @@ class ElevesPage(ctk.CTkFrame):
             command=self._effacer_recherche,
         ).pack(side="right", padx=15, pady=12)
 
-        # Astuce
+        # Astuce dynamique
+        astuces = ["cliquez sur le MATRICULE pour le copier"]
+        if self._peut_gerer():
+            astuces.append("Frais = voir les frais de l'eleve")
+            astuces.append("Modifier = modifier la fiche")
+        if self._peut_supprimer():
+            astuces.append("X = supprimer")
+
         info_frame = ctk.CTkFrame(self, fg_color="#FFF7E0", corner_radius=6)
         info_frame.pack(fill="x", pady=(0, 10))
         ctk.CTkLabel(
             info_frame,
-            text="Astuce : le SOLDE ne compte que les FRAIS SCOLAIRES  |  "
-                 "Les autres frais (Uniforme, Transport...) sont separes  |  "
-                 "Shift + molette pour defiler",
+            text="Astuce : " + "  |  ".join(astuces),
             font=("Segoe UI", 11),
             text_color="#8B6914",
         ).pack(padx=15, pady=6, anchor="w")
 
-        # Compteur
         self.label_compteur = ctk.CTkLabel(
             self,
             text="",
@@ -97,7 +147,6 @@ class ElevesPage(ctk.CTkFrame):
         )
         self.label_compteur.pack(anchor="w", pady=(0, 10))
 
-        # Tableau avec scroll horizontal
         self.tableau = HorizontalScrollFrame(self, fg_color="white",
                                              corner_radius=10)
         self.tableau.pack(fill="both", expand=True)
@@ -115,13 +164,11 @@ class ElevesPage(ctk.CTkFrame):
             ("Nom", 100),
             ("Prenom", 100),
             ("Classe", 90),
+            ("Total du", 95),
+            ("Total paye", 95),
+            ("Solde", 90),
             ("Frais scol.", 95),
             ("Paye scol.", 95),
-            ("Solde", 90),
-            ("Uniforme", 85),
-            ("Transport", 85),
-            ("Cantine", 80),
-            ("Inscript.", 85),
         ]
 
         for nom, largeur in colonnes:
@@ -139,7 +186,7 @@ class ElevesPage(ctk.CTkFrame):
             text="Actions",
             font=("Segoe UI", 11, "bold"),
             text_color=COLOR_NAVY,
-            width=80,
+            width=self._largeur_actions(),
             anchor="center",
         ).pack(side="left", padx=4, pady=10)
 
@@ -154,6 +201,9 @@ class ElevesPage(ctk.CTkFrame):
 
         recherche = self.entree_recherche.get()
         eleves = lister_eleves(recherche)
+
+        # ===== FILTRE PAR NIVEAU (Directeur/Prefer) =====
+        eleves = filtrer_eleves_par_niveau(eleves, self.utilisateur)
 
         self.label_compteur.configure(text=f"{len(eleves)} eleve(s) trouve(s)")
 
@@ -172,17 +222,16 @@ class ElevesPage(ctk.CTkFrame):
                                  corner_radius=4)
             ligne.pack(fill="x", pady=1)
 
-            frais = eleve.get("frais_scolarite", 0) or 0
+            frais_sc = eleve.get("frais_scolarite", 0) or 0
             paye_sc = eleve.get("paye_scolaire", 0) or 0
-            solde = eleve.get("solde", 0) or 0
-            paye_uni = eleve.get("paye_uniforme", 0) or 0
-            paye_tra = eleve.get("paye_transport", 0) or 0
-            paye_can = eleve.get("paye_cantine", 0) or 0
-            paye_ins = eleve.get("paye_inscription", 0) or 0
 
-            couleur_solde = "#e74c3c" if solde > 0 else "#27ae60"
+            total_du = eleve.get("total_frais_du", 0) or 0
+            total_paye = eleve.get("total_frais_paye", 0) or 0
+            total_solde = eleve.get("total_frais_solde", 0) or 0
 
-            # Matricule cliquable
+            couleur_solde = "#e74c3c" if total_solde > 0 else "#27ae60"
+
+            # ===== Matricule cliquable pour COPIER =====
             label_matricule = ctk.CTkLabel(
                 ligne,
                 text=eleve["matricule"],
@@ -199,24 +248,15 @@ class ElevesPage(ctk.CTkFrame):
                     self._copier_matricule(m, lbl)
             )
 
-            # Autres colonnes
             autres = [
                 (eleve["nom"], 100, "#333333", "normal"),
                 (eleve["prenom"], 100, "#333333", "normal"),
                 (eleve["classe"], 90, "#333333", "normal"),
-                # ===== FRAIS SCOLAIRES (colore en bleu marine) =====
-                (format_montant(frais), 95, "#0F2C5C", "bold"),
-                (format_montant(paye_sc), 95, "#27ae60", "bold"),
-                (format_montant(solde), 90, couleur_solde, "bold"),
-                # ===== AUTRES FRAIS (colore en orange) =====
-                (format_montant(paye_uni) if paye_uni > 0 else "-",
-                 85, "#e67e22", "normal"),
-                (format_montant(paye_tra) if paye_tra > 0 else "-",
-                 85, "#e67e22", "normal"),
-                (format_montant(paye_can) if paye_can > 0 else "-",
-                 80, "#e67e22", "normal"),
-                (format_montant(paye_ins) if paye_ins > 0 else "-",
-                 85, "#e67e22", "normal"),
+                (format_montant(total_du), 95, "#0F2C5C", "bold"),
+                (format_montant(total_paye), 95, "#27ae60", "bold"),
+                (format_montant(total_solde), 90, couleur_solde, "bold"),
+                (format_montant(frais_sc), 95, "#666666", "normal"),
+                (format_montant(paye_sc), 95, "#666666", "normal"),
             ]
 
             for valeur, largeur, couleur, poids in autres:
@@ -229,56 +269,86 @@ class ElevesPage(ctk.CTkFrame):
                     anchor="w",
                 ).pack(side="left", padx=4, pady=8)
 
-            # Actions
-            actions = ctk.CTkFrame(ligne, fg_color="transparent", width=80)
+            # ===== Actions =====
+            actions = ctk.CTkFrame(ligne, fg_color="transparent",
+                                   width=self._largeur_actions())
             actions.pack(side="left", padx=4)
 
+            # Frais : toujours visible (info)
             ctk.CTkButton(
                 actions,
-                text="M",
-                font=("Segoe UI", 11, "bold"),
-                width=32,
+                text="Frais",
+                font=("Segoe UI", 10, "bold"),
+                width=60,
                 height=26,
-                fg_color="#3498db",
-                hover_color="#2980b9",
-                command=lambda e=eleve: self._modifier_eleve(e),
+                fg_color="#9b59b6",
+                hover_color="#8e44ad",
+                command=lambda el=eleve: self._ouvrir_detail_frais(el),
             ).pack(side="left", padx=2)
 
-            ctk.CTkButton(
-                actions,
-                text="X",
-                font=("Segoe UI", 11, "bold"),
-                width=32,
-                height=26,
-                fg_color="#e74c3c",
-                hover_color="#c0392b",
-                command=lambda e=eleve: self._supprimer_eleve(e),
-            ).pack(side="left", padx=2)
+            # Modifier : seulement si peut_gerer_eleves
+            if self._peut_gerer():
+                ctk.CTkButton(
+                    actions,
+                    text="Modifier",
+                    font=("Segoe UI", 10, "bold"),
+                    width=65,
+                    height=26,
+                    fg_color="#3498db",
+                    hover_color="#2980b9",
+                    command=lambda el=eleve: self._modifier_eleve(el),
+                ).pack(side="left", padx=2)
 
+            # Supprimer : seulement si peut_supprimer
+            if self._peut_supprimer():
+                ctk.CTkButton(
+                    actions,
+                    text="X",
+                    font=("Segoe UI", 11, "bold"),
+                    width=30,
+                    height=26,
+                    fg_color="#e74c3c",
+                    hover_color="#c0392b",
+                    command=lambda el=eleve: self._supprimer_eleve(el),
+                ).pack(side="left", padx=2)
+
+    # ================== COPIER MATRICULE ==================
     def _copier_matricule(self, matricule, label_widget):
+        """Copie le matricule dans le presse-papier + feedback visuel."""
         try:
             self.clipboard_clear()
             self.clipboard_append(matricule)
             self.update()
             label_widget.configure(text="Copie !", text_color="#27ae60")
-            self.after(
-                800,
-                lambda: label_widget.configure(
-                    text=matricule, text_color="#0066CC"
-                )
-            )
+            self.after(800, lambda: label_widget.configure(
+                text=matricule, text_color="#0066CC"
+            ))
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible de copier : {e}")
 
     # ================== ACTIONS ==================
     def _ouvrir_formulaire(self, eleve=None):
-        FormulaireEleve(self, eleve=eleve, on_save=self.rafraichir_tableau)
+        if not self._peut_gerer():
+            messagebox.showerror("Acces refuse",
+                                 "Vous n'avez pas la permission de gerer les eleves.")
+            return
+        FormulaireEleve(
+            self, eleve=eleve,
+            utilisateur=self.utilisateur,
+            on_save=self.rafraichir_tableau
+        )
 
     def _modifier_eleve(self, eleve):
+        if not self._peut_gerer():
+            messagebox.showerror("Acces refuse", "Permission requise.")
+            return
         eleve_complet = get_eleve(eleve["id"])
         self._ouvrir_formulaire(eleve_complet)
 
     def _supprimer_eleve(self, eleve):
+        if not self._peut_supprimer():
+            messagebox.showerror("Acces refuse", "Permission requise.")
+            return
         reponse = messagebox.askyesno(
             "Confirmation",
             f"Voulez-vous vraiment supprimer l'eleve :\n\n"
@@ -291,30 +361,55 @@ class ElevesPage(ctk.CTkFrame):
             else:
                 messagebox.showerror("Erreur", msg)
 
+    def _ouvrir_detail_frais(self, eleve):
+        """Ouvre le modal detail des frais de l'eleve."""
+        try:
+            from ui.frais_eleve_modal import ModalFraisEleve
+            ModalFraisEleve(self, eleve, self.utilisateur,
+                            on_save=self.rafraichir_tableau)
+        except ImportError:
+            try:
+                from core.frais import lister_frais_eleve, total_frais_eleve
+                frais = lister_frais_eleve(eleve["id"])
+                totaux = total_frais_eleve(eleve["id"])
+                texte = (
+                    f"{eleve['nom']} {eleve['prenom']} ({eleve['matricule']})\n"
+                    f"Classe : {eleve['classe']}\n\n"
+                    f"Total du : {format_montant(totaux['total_du'])}\n"
+                    f"Total paye : {format_montant(totaux['total_paye'])}\n"
+                    f"Solde restant : {format_montant(totaux['total_solde'])}\n\n"
+                    f"Detail :\n"
+                )
+                if frais:
+                    for f in frais:
+                        texte += (f"  - {f['libelle']} : "
+                                  f"{format_montant(f['montant_initial'])} "
+                                  f"(paye {format_montant(f['montant_paye'])}, "
+                                  f"reste {format_montant(f['solde'])})\n")
+                else:
+                    texte += "  Aucun frais enregistre."
+                messagebox.showinfo("Frais de l'eleve", texte)
+            except Exception as ex:
+                messagebox.showerror("Erreur", f"Impossible d'afficher les frais : {ex}")
+
 
 # ============================================================
 # FORMULAIRE D'AJOUT / MODIFICATION
 # ============================================================
 class FormulaireEleve(ctk.CTkToplevel):
-    def __init__(self, parent, eleve=None, on_save=None):
+    def __init__(self, parent, eleve=None, utilisateur=None, on_save=None):
         super().__init__(parent)
 
         self.eleve = eleve
+        self.utilisateur = utilisateur or {}
         self.on_save = on_save
         self.mode = "modification" if eleve else "ajout"
 
         titre = "Modifier un eleve" if eleve else "Nouvel eleve"
         self.title(titre)
 
-        largeur = 520
-        hauteur = 620
-        self.geometry(f"{largeur}x{hauteur}")
         self.configure(fg_color="#F5F7FB")
-        self.resizable(False, False)
-
-        x = (self.winfo_screenwidth() // 2) - (largeur // 2)
-        y = 30
-        self.geometry(f"{largeur}x{hauteur}+{x}+{y}")
+        setup_adaptive_window(self, largeur_max=520, hauteur_max=640)
 
         self.bind("<Escape>", lambda e: self.destroy())
 
@@ -333,6 +428,30 @@ class FormulaireEleve(ctk.CTkToplevel):
     def _construire_interface(self):
         card = ctk.CTkFrame(self, fg_color="white", corner_radius=15)
         card.pack(fill="both", expand=True, padx=15, pady=15)
+
+        boutons = ctk.CTkFrame(card, fg_color="transparent")
+        boutons.pack(fill="x", padx=15, pady=(5, 12), side="bottom")
+
+        ctk.CTkButton(
+            boutons,
+            text="Annuler (Echap)",
+            font=("Segoe UI", 13, "bold"),
+            fg_color="#e74c3c",
+            text_color="white",
+            hover_color="#c0392b",
+            height=42,
+            command=self.destroy,
+        ).pack(side="left", expand=True, fill="x", padx=(0, 5))
+
+        ctk.CTkButton(
+            boutons,
+            text="Enregistrer",
+            font=("Segoe UI", 13, "bold"),
+            fg_color=COLOR_NAVY,
+            hover_color="#1a3d75",
+            height=42,
+            command=self._enregistrer,
+        ).pack(side="left", expand=True, fill="x", padx=(5, 0))
 
         ligne_titre = ctk.CTkFrame(card, fg_color="transparent")
         ligne_titre.pack(fill="x", padx=15, pady=(12, 5))
@@ -357,7 +476,7 @@ class FormulaireEleve(ctk.CTkToplevel):
         ).pack(side="right")
 
         zone_scroll = ctk.CTkScrollableFrame(card, fg_color="transparent",
-                                             corner_radius=0)
+                                              corner_radius=0)
         zone_scroll.pack(fill="both", expand=True, padx=5, pady=5)
 
         self.champs = {}
@@ -377,45 +496,73 @@ class FormulaireEleve(ctk.CTkToplevel):
             valeur=self.eleve["prenom"] if self.eleve else ""
         )
 
-        # Classe editable
         ctk.CTkLabel(
-            zone_scroll, text="Classe * (tapez librement)",
+            zone_scroll, text="Classe *",
             font=("Segoe UI", 12, "bold"), text_color="#333333", anchor="w"
         ).pack(padx=10, pady=(8, 4), fill="x")
 
-        valeur_classe = self.eleve["classe"] if self.eleve else "1ere Primaire"
+        classes_actives = lister_classes(actif=True)
+        noms_classes = [c["nom"] for c in classes_actives]
 
-        self.champs["classe"] = ctk.CTkEntry(
-            zone_scroll,
-            font=("Segoe UI", 13),
-            height=36,
-            placeholder_text="Ex: 1ere Primaire, CE1, Terminale A...",
-        )
-        self.champs["classe"].insert(0, valeur_classe)
-        self.champs["classe"].pack(padx=10, pady=(0, 4), fill="x")
+        if not noms_classes:
+            cadre_alerte = ctk.CTkFrame(zone_scroll, fg_color="#FFF3CD",
+                                         corner_radius=8)
+            cadre_alerte.pack(padx=10, pady=(0, 8), fill="x")
+            ctk.CTkLabel(
+                cadre_alerte,
+                text=("Aucune classe n'a encore ete creee.\n\n"
+                      "Allez dans le menu 'Classes' pour creer vos classes "
+                      "(Maternelle, Primaire, Secondaire) avant d'inscrire "
+                      "des eleves."),
+                font=("Segoe UI", 11, "bold"),
+                text_color="#8B6914",
+                justify="left",
+                wraplength=420,
+            ).pack(padx=15, pady=12, anchor="w")
 
-        ctk.CTkLabel(
-            zone_scroll, text="Suggestions rapides :",
-            font=("Segoe UI", 10), text_color="#888888", anchor="w"
-        ).pack(padx=10, pady=(2, 2), fill="x")
+            self.champs["classe"] = ctk.CTkComboBox(
+                zone_scroll, values=["-- Aucune classe --"],
+                font=("Segoe UI", 12), height=36, state="disabled",
+            )
+            self.champs["classe"].pack(padx=10, pady=(0, 6), fill="x")
+        else:
+            self.champs["classe"] = ctk.CTkComboBox(
+                zone_scroll, values=noms_classes,
+                font=("Segoe UI", 13), height=38,
+            )
+            if self.eleve and self.eleve.get("classe"):
+                classe_actuelle = self.eleve["classe"]
+                if classe_actuelle not in noms_classes:
+                    noms_classes.append(classe_actuelle)
+                    self.champs["classe"].configure(values=noms_classes)
+                self.champs["classe"].set(classe_actuelle)
+            else:
+                self.champs["classe"].set(noms_classes[0])
+            self.champs["classe"].pack(padx=10, pady=(0, 6), fill="x")
 
-        ligne_suggestions = ctk.CTkFrame(zone_scroll, fg_color="transparent")
-        ligne_suggestions.pack(padx=10, pady=(0, 6), fill="x")
-
-        for classe_rapide in ["Maternelle 1", "1ere Primaire",
-                              "1ere Secondaire", "1ere Universite"]:
-            ctk.CTkButton(
-                ligne_suggestions,
-                text=classe_rapide,
+        if noms_classes:
+            ctk.CTkLabel(
+                zone_scroll,
+                text=f"{len(noms_classes)} classe(s) disponible(s)",
                 font=("Segoe UI", 10),
-                fg_color="#e0e0e0",
-                text_color="#333333",
-                hover_color="#c0c0c0",
-                height=26,
-                command=lambda c=classe_rapide: self._set_classe(c),
-            ).pack(side="left", padx=(0, 4))
+                text_color="#888888",
+                anchor="w",
+            ).pack(padx=10, pady=(0, 8), fill="x")
 
-        # Sexe
+        if not self.eleve and noms_classes:
+            cadre_info = ctk.CTkFrame(zone_scroll, fg_color="#E3F2FD",
+                                       corner_radius=8)
+            cadre_info.pack(padx=10, pady=(0, 8), fill="x")
+            ctk.CTkLabel(
+                cadre_info,
+                text=("A l'enregistrement, les FRAIS de la classe "
+                      "selectionnee seront generes automatiquement."),
+                font=("Segoe UI", 10, "bold"),
+                text_color="#1565C0",
+                justify="left",
+                wraplength=420,
+            ).pack(padx=15, pady=10, anchor="w")
+
         ctk.CTkLabel(
             zone_scroll, text="Sexe",
             font=("Segoe UI", 12, "bold"), text_color="#333333", anchor="w"
@@ -444,44 +591,14 @@ class FormulaireEleve(ctk.CTkToplevel):
             if self.eleve and self.eleve["telephone_parent"] else ""
         )
 
-        # Frais de scolarite
         valeur_frais = ""
         if self.eleve and self.eleve.get("frais_scolarite"):
             valeur_frais = str(int(self.eleve["frais_scolarite"]))
 
         self.champs["frais_scolarite"] = self._ajouter_champ(
-            zone_scroll, f"Frais de scolarite annuels ({CURRENCY_SYMBOL})",
+            zone_scroll, f"Frais de scolarite annuels ({CURRENCY_SYMBOL}) - optionnel",
             valeur=valeur_frais
         )
-
-        # Boutons
-        boutons = ctk.CTkFrame(card, fg_color="transparent")
-        boutons.pack(fill="x", padx=15, pady=(5, 12))
-
-        ctk.CTkButton(
-            boutons,
-            text="Annuler (Echap)",
-            font=("Segoe UI", 13, "bold"),
-            fg_color="#e74c3c",
-            text_color="white",
-            hover_color="#c0392b",
-            height=42,
-            command=self.destroy,
-        ).pack(side="left", expand=True, fill="x", padx=(0, 5))
-
-        ctk.CTkButton(
-            boutons,
-            text="Enregistrer",
-            font=("Segoe UI", 13, "bold"),
-            fg_color=COLOR_NAVY,
-            hover_color="#1a3d75",
-            height=42,
-            command=self._enregistrer,
-        ).pack(side="left", expand=True, fill="x", padx=(5, 0))
-
-    def _set_classe(self, valeur):
-        self.champs["classe"].delete(0, "end")
-        self.champs["classe"].insert(0, valeur)
 
     def _ajouter_champ(self, parent, label, valeur=""):
         ctk.CTkLabel(
@@ -498,10 +615,23 @@ class FormulaireEleve(ctk.CTkToplevel):
         matricule = self.champs["matricule"].get().strip()
         nom = self.champs["nom"].get().strip()
         prenom = self.champs["prenom"].get().strip()
-        classe = self.champs["classe"].get().strip()
         sexe = self.champs["sexe"].get().strip()
         nom_parent = self.champs["nom_parent"].get().strip() or None
         telephone_parent = self.champs["telephone_parent"].get().strip() or None
+
+        try:
+            classe = self.champs["classe"].get().strip()
+        except Exception:
+            classe = ""
+
+        if not classe or classe == "-- Aucune classe --":
+            messagebox.showerror(
+                "Erreur",
+                "Veuillez selectionner une classe.\n\n"
+                "Si la liste est vide, creez d'abord des classes "
+                "dans le menu 'Classes'."
+            )
+            return
 
         frais_str = self.champs["frais_scolarite"].get().strip().replace(" ", "").replace(",", "")
         try:
@@ -515,18 +645,23 @@ class FormulaireEleve(ctk.CTkToplevel):
                                  "Veuillez remplir tous les champs marques d'un *.")
             return
 
+        user_id = self.utilisateur.get("id") if self.utilisateur else None
+
         if self.eleve:
             ok, msg = modifier_eleve(
                 self.eleve["id"], matricule, nom, prenom, classe,
-                sexe, None, nom_parent, telephone_parent, frais_scolarite
+                sexe, None, nom_parent, telephone_parent, frais_scolarite,
+                utilisateur_id=user_id,
             )
         else:
             ok, msg = ajouter_eleve(
                 matricule, nom, prenom, classe,
-                sexe, None, nom_parent, telephone_parent, frais_scolarite
+                sexe, None, nom_parent, telephone_parent, frais_scolarite,
+                utilisateur_id=user_id,
             )
 
         if ok:
+            messagebox.showinfo("Succes", msg)
             if self.on_save:
                 self.on_save()
             self.destroy()

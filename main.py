@@ -5,8 +5,9 @@ import sys
 from database import init_database
 from core.utilisateurs import creer_admin_par_defaut, authentifier
 from core.licence import licence_est_valide
-from core.session import charger_session, sauvegarder_session
+from core.session import charger_session, sauvegarder_session, supprimer_session
 from core.updater import verifier_mise_a_jour
+from ui.login import LoginWindow
 from ui.dashboard import DashboardWindow
 from ui.activation_ui import ActivationWindow
 from ui.update_ui import UpdateWindow
@@ -18,6 +19,23 @@ def _silence_dpi_error():
             return
         sys.__excepthook__(exc_type, exc_value, exc_traceback)
     sys.excepthook = handler
+
+
+def _extraire_utilisateur(valeur):
+    """
+    Normalise la valeur en dict utilisateur.
+    Accepte un dict directement, ou un tuple (ok, dict, msg).
+    Retourne le dict ou None.
+    """
+    if valeur is None:
+        return None
+    if isinstance(valeur, dict):
+        return valeur
+    if isinstance(valeur, tuple):
+        for item in valeur:
+            if isinstance(item, dict):
+                return item
+    return None
 
 
 def _verifier_licence():
@@ -82,8 +100,17 @@ def _sauvegarde_cloud_si_besoin():
                 pass
 
         print("[BACKUP] Envoi de la sauvegarde cloud...")
-        ok, msg = sauvegarder_dans_cloud()
-        print(f"[BACKUP] {msg}")
+        resultat = sauvegarder_dans_cloud()
+
+        # Gere le retour : (ok, msg) OU tuple plus long
+        if isinstance(resultat, tuple):
+            if len(resultat) >= 2:
+                ok, msg = resultat[0], resultat[1]
+                print(f"[BACKUP] {msg}")
+            else:
+                print(f"[BACKUP] {resultat}")
+        else:
+            print(f"[BACKUP] {resultat}")
     except Exception as e:
         print(f"[BACKUP] Ignore : {e}")
 
@@ -111,25 +138,39 @@ def main():
     # 5. Sauvegarde cloud silencieuse (si active)
     _sauvegarde_cloud_si_besoin()
 
-    # 6. AUTO-LOGIN (plus jamais de fenetre de connexion)
+    # 6. Reconnexion auto via session persistante
     utilisateur = charger_session()
+    utilisateur = _extraire_utilisateur(utilisateur)
 
-    if not utilisateur:
-        print("[INFO] Aucune session active. Connexion admin par defaut...")
-        utilisateur = authentifier("admin@bndeke.com", "admin123")
-        if utilisateur:
-            sauvegarder_session(utilisateur)
-        else:
-            print("[ERREUR] Impossible de se connecter. Fermeture.")
+    if utilisateur:
+        print(f"[SESSION] Reconnexion automatique : {utilisateur.get('email', '?')}")
+        dashboard = DashboardWindow(utilisateur)
+        dashboard.mainloop()
+
+        if not getattr(dashboard, "deconnexion_demandee", False):
+            print("[INFO] Application fermee.")
             return
 
-    # 7. Ouvrir le dashboard
-    print(f"[SESSION] Connexion : {utilisateur.get('email', 'inconnu')}")
-    dashboard = DashboardWindow(utilisateur)
-    dashboard.mainloop()
+    # 7. Boucle de connexion (login)
+    while True:
+        login = LoginWindow()
+        login.mainloop()
 
-    # 8. Fin de l'application
-    print("[INFO] Application fermee.")
+        utilisateur = _extraire_utilisateur(login.utilisateur_connecte)
+
+        if not utilisateur:
+            print("[INFO] Application fermee.")
+            return
+
+        print(f"[SESSION] Connexion : {utilisateur.get('email', '?')}")
+        dashboard = DashboardWindow(utilisateur)
+        dashboard.mainloop()
+
+        # Si l'utilisateur a ferme par la croix -> on quitte
+        if not getattr(dashboard, "deconnexion_demandee", False):
+            print("[INFO] Application fermee.")
+            return
+        # Sinon (deconnexion) -> on relance le login
 
 
 if __name__ == "__main__":

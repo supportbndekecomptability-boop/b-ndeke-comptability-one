@@ -1,10 +1,13 @@
 """
 Interface de recouvrement
 Affiche les eleves qui n'ont PAS encore paye au moins X
+Filtre par niveau : Directeur (Maternelle+Primaire), Prefet (Secondaire)
 """
 import customtkinter as ctk
 from tkinter import messagebox
 from config import COLOR_NAVY, format_montant, CURRENCY_SYMBOL
+from ui.permissions_ui import peut, filtrer_eleves_par_niveau
+from core.permissions import get_role, niveaux_autorises
 from core.recouvrement import (
     lister_eleves_a_recouvrer, lister_classes_disponibles,
     stats_recouvrement,
@@ -18,12 +21,28 @@ class RecouvrementPage(ctk.CTkFrame):
     def __init__(self, parent, utilisateur=None):
         super().__init__(parent, fg_color="transparent")
 
-        self.utilisateur = utilisateur
+        self.utilisateur = utilisateur or {}
         self.resultats = []
 
         self._construire_interface()
         self._charger()
 
+    # ================== PERMISSIONS ==================
+    def _peut_imprimer(self):
+        return peut(self.utilisateur, "peut_imprimer")
+
+    def _classes_autorisees(self):
+        """Retourne le set des noms de classes autorisees ou None."""
+        niveaux = niveaux_autorises(self.utilisateur)
+        if niveaux is None:
+            return None
+        try:
+            from core.classes import lister_classes
+            return {c["nom"] for c in lister_classes() if c.get("niveau") in niveaux}
+        except Exception:
+            return set()
+
+    # ================== INTERFACE ==================
     def _construire_interface(self):
         # En-tete
         top = ctk.CTkFrame(self, fg_color="transparent")
@@ -36,15 +55,27 @@ class RecouvrementPage(ctk.CTkFrame):
             text_color=COLOR_NAVY,
         ).pack(side="left")
 
-        ctk.CTkButton(
-            top,
-            text="Imprimer la liste",
-            font=("Segoe UI", 12, "bold"),
-            fg_color="#27ae60",
-            hover_color="#229954",
-            height=40,
-            command=self._imprimer,
-        ).pack(side="right")
+        # Badge niveaux autorises
+        niveaux = niveaux_autorises(self.utilisateur)
+        if niveaux:
+            ctk.CTkLabel(
+                top,
+                text=" | ".join(niveaux),
+                font=("Segoe UI", 10, "bold"),
+                text_color="#8e44ad",
+            ).pack(side="left", padx=(15, 0), pady=(8, 0))
+
+        # Bouton "Imprimer la liste" : seulement si peut_imprimer
+        if self._peut_imprimer():
+            ctk.CTkButton(
+                top,
+                text="Imprimer la liste",
+                font=("Segoe UI", 12, "bold"),
+                fg_color="#27ae60",
+                hover_color="#229954",
+                height=40,
+                command=self._imprimer,
+            ).pack(side="right")
 
         # ===== EXPLICATION =====
         info_frame = ctk.CTkFrame(self, fg_color="#FFF7E0", corner_radius=8)
@@ -67,7 +98,6 @@ class RecouvrementPage(ctk.CTkFrame):
         ligne_filtre = ctk.CTkFrame(filtre_frame, fg_color="transparent")
         ligne_filtre.pack(fill="x", padx=15, pady=(12, 8))
 
-        # Montant minimum paye
         ctk.CTkLabel(
             ligne_filtre,
             text="Eleves n'ayant pas paye au moins :",
@@ -91,7 +121,6 @@ class RecouvrementPage(ctk.CTkFrame):
             text_color="#666666",
         ).pack(side="left", padx=(0, 20))
 
-        # Classe
         ctk.CTkLabel(
             ligne_filtre,
             text="Classe :",
@@ -99,7 +128,15 @@ class RecouvrementPage(ctk.CTkFrame):
             text_color="#333333",
         ).pack(side="left", padx=(0, 8))
 
-        classes = ["Toutes"] + lister_classes_disponibles()
+        # Filtrer la liste des classes selon les niveaux autorises
+        classes_ok = self._classes_autorisees()
+        if classes_ok is None:
+            classes = ["Toutes"] + lister_classes_disponibles()
+        else:
+            classes = ["Toutes"] + [
+                c for c in lister_classes_disponibles() if c in classes_ok
+            ]
+
         self.combo_classe = ctk.CTkComboBox(
             ligne_filtre,
             values=classes,
@@ -133,11 +170,9 @@ class RecouvrementPage(ctk.CTkFrame):
             command=self._reinitialiser,
         ).pack(side="left", padx=(8, 0))
 
-        # ===== STATS =====
         self.frame_stats = ctk.CTkFrame(self, fg_color="transparent")
         self.frame_stats.pack(fill="x", pady=(0, 10))
 
-        # ===== TABLEAU =====
         self.tableau = HorizontalScrollFrame(self, fg_color="white",
                                              corner_radius=10)
         self.tableau.pack(fill="both", expand=True)
@@ -172,7 +207,6 @@ class RecouvrementPage(ctk.CTkFrame):
             ).pack(side="left", padx=4, pady=10)
 
     def _charger(self):
-        # Recuperer les filtres
         try:
             montant_min = float(self.entree_montant.get().strip() or "0")
         except ValueError:
@@ -181,10 +215,12 @@ class RecouvrementPage(ctk.CTkFrame):
         classe_sel = self.combo_classe.get().strip()
         classe = None if classe_sel == "Toutes" else classe_sel
 
-        # Charger
         self.resultats = lister_eleves_a_recouvrer(
             montant_min_paye=montant_min, classe=classe
         )
+
+        # ===== FILTRE PAR NIVEAU =====
+        self.resultats = filtrer_eleves_par_niveau(self.resultats, self.utilisateur)
 
         self._afficher_stats(montant_min, classe)
         self._afficher_tableau()
@@ -267,6 +303,11 @@ class RecouvrementPage(ctk.CTkFrame):
                 ).pack(side="left", padx=4, pady=8)
 
     def _imprimer(self):
+        if not self._peut_imprimer():
+            messagebox.showerror("Acces refuse",
+                                 "Vous n'avez pas la permission d'imprimer.")
+            return
+
         if not self.resultats:
             messagebox.showwarning(
                 "Aucune donnee",

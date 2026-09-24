@@ -119,12 +119,24 @@ class LoginWindow(ctk.CTk):
             self.label_message.configure(text="Veuillez remplir tous les champs.")
             return
 
-        utilisateur = authentifier(email, mot_de_passe)
+        # authentifier() retourne (ok, user_dict, message)
+        resultat = authentifier(email, mot_de_passe)
 
-        if utilisateur:
+        if isinstance(resultat, tuple) and len(resultat) >= 2:
+            ok, utilisateur = resultat[0], resultat[1]
+            message = resultat[2] if len(resultat) >= 3 else ""
+        else:
+            ok = False
+            utilisateur = None
+            message = "Reponse invalide du serveur."
+
+        if ok and isinstance(utilisateur, dict):
             self.utilisateur_connecte = utilisateur
             sauvegarder_session(utilisateur)
             self.destroy()
         else:
-            self.label_message.configure(text="Email ou mot de passe incorrect.")
+            # Afficher le vrai message d'erreur si possible
+            self.label_message.configure(
+                text=message or "Email ou mot de passe incorrect."
+            )
             self.entree_mdp.delete(0, "end")

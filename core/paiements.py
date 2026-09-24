@@ -28,24 +28,224 @@ def generer_numero_paie():
     return f"PAIE-{annee}-{total + 1:04d}"
 
 
+# ============ DETTES ELEVES ============
+def dettes_en_cours_eleve(eleve_id):
+    """Retourne toutes les dettes en cours d'un eleve (ancienne d'abord)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, eleve_id, annee_libelle, categorie, montant_initial,
+               montant_paye, solde, motif, statut, date_creation
+        FROM dettes_eleves
+        WHERE eleve_id = ? AND statut = 'en_cours' AND solde > 0
+        ORDER BY date_creation ASC, id ASC
+    """, (eleve_id,))
+    rows = [dict(r) for r in cursor.fetchall()]
+    conn.close()
+    return rows
+
+
+def total_dettes_eleve(eleve_id):
+    """Somme des soldes de dettes en cours d'un eleve."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT COALESCE(SUM(solde), 0) as total
+        FROM dettes_eleves
+        WHERE eleve_id = ? AND statut = 'en_cours' AND solde > 0
+    """, (eleve_id,))
+    total = cursor.fetchone()["total"]
+    conn.close()
+    return total
+
+
+def _affecter_paiement_aux_dettes(cursor, eleve_id, montant,
+                                    mode_paiement, utilisateur_id,
+                                    date_operation=None):
+    """
+    Affecte le montant (dans l'ordre) aux dettes en cours de l'eleve.
+    Retourne (montant_affecte, detail_liste, reste).
+    detail_liste = [{'categorie': 'Scolarite', 'montant': 5000, 'dette_id': 3}, ...]
+    """
+    cursor.execute("""
+        SELECT id, categorie, solde
+        FROM dettes_eleves
+        WHERE eleve_id = ? AND statut = 'en_cours' AND solde > 0
+        ORDER BY date_creation ASC, id ASC
+    """, (eleve_id,))
+    dettes = [dict(r) for r in cursor.fetchall()]
+
+    reste = float(montant)
+    affecte_total = 0.0
+    details = []
+
+    if not date_operation:
+        date_operation = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    for d in dettes:
+        if reste <= 0:
+            break
+        solde = d["solde"] or 0
+        if solde <= 0:
+            continue
+        montant_a_affecter = min(reste, solde)
+
+        # Enregistrer le paiement de dette
+        numero_recu = f"REC-DET-{datetime.now().strftime('%Y%m%d%H%M%S')}-{d['id']}"
+        cursor.execute("""
+            INSERT INTO paiements_dettes
+                (dette_id, numero_recu, montant, mode_paiement,
+                 utilisateur_id, date_paiement)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (d["id"], numero_recu, montant_a_affecter,
+              mode_paiement, utilisateur_id, date_operation))
+
+        # Mettre a jour la dette
+        cursor.execute("SELECT montant_paye FROM dettes_eleves WHERE id = ?",
+                       (d["id"],))
+        row = cursor.fetchone()
+        paye_actuel = (row["montant_paye"] if row else 0) or 0
+        nouveau_paye = paye_actuel + montant_a_affecter
+        nouveau_solde = solde - montant_a_affecter
+        nouveau_statut = "soldee" if nouveau_solde <= 0 else "en_cours"
+
+        cursor.execute("""
+            UPDATE dettes_eleves
+            SET montant_paye = ?, solde = ?, statut = ?
+            WHERE id = ?
+        """, (nouveau_paye, nouveau_solde, nouveau_statut, d["id"]))
+
+        details.append({
+            "dette_id": d["id"],
+            "categorie": d["categorie"],
+            "montant": montant_a_affecter,
+            "ancien_solde": solde,
+            "nouveau_solde": nouveau_solde,
+        })
+        affecte_total += montant_a_affecter
+        reste -= montant_a_affecter
+
+    return affecte_total, details, reste
+
+
 # ============ PAIEMENTS ELEVES ============
-def ajouter_paiement_eleve(eleve_id, montant, motif, mode_paiement, utilisateur_id=None):
+def ajouter_paiement_eleve(eleve_id, montant, motif, mode_paiement,
+                            utilisateur_id=None, affecter_dettes=True,
+                            date_operation=None):
+    """
+    Enregistre un paiement eleve.
+    - affecter_dettes=True  -> le montant est D'ABORD affecte aux dettes en cours
+    - affecter_dettes=False -> paiement normal (scolarite uniquement)
+    - date_operation : 'AAAA-MM-JJ' ou 'AAAA-MM-JJ HH:MM:SS'
+                       Si None -> date du jour
+    Retourne (ok, message, numero_recu, details_dettes).
+    """
     conn = get_connection()
     cursor = conn.cursor()
     try:
         montant = float(montant)
         if montant <= 0:
-            return False, "Le montant doit etre superieur a 0", None
-        numero = generer_numero_recu()
+            return False, "Le montant doit etre superieur a 0", None, []
+
+        # Date d'operation
+        if not date_operation:
+            date_operation = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        elif len(date_operation) == 10:
+            date_operation = date_operation + " " + datetime.now().strftime("%H:%M:%S")
+
+        # 1) Affecter d'abord aux dettes en cours (si demande)
+        if affecter_dettes:
+            affecte, details, reste = _affecter_paiement_aux_dettes(
+                cursor, eleve_id, montant, mode_paiement, utilisateur_id,
+                date_operation=date_operation,
+            )
+        else:
+            affecte, details, reste = 0, [], montant
+
+        # 2) Numero de recu
+        cursor.execute("SELECT COUNT(*) as total FROM paiements_eleves")
+        total = cursor.fetchone()["total"]
+        annee = datetime.now().year
+        numero = f"REC-{annee}-{total + 1:04d}"
+
+        # 3) Motif enrichi
+        motif_final = motif.strip()
+        if details:
+            detail_txt = " | ".join(
+                f"{d['categorie']}: {int(d['montant'])}" for d in details
+            )
+            motif_final = f"{motif_final} (Dettes: {detail_txt})"
+
+        # 4) Enregistrer le paiement global
         cursor.execute("""
             INSERT INTO paiements_eleves
-                (numero_recu, eleve_id, montant, motif, mode_paiement, utilisateur_id)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (numero, eleve_id, montant, motif.strip(), mode_paiement, utilisateur_id))
+                (numero_recu, eleve_id, montant, motif, mode_paiement,
+                 utilisateur_id, date_paiement)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (numero, eleve_id, montant, motif_final, mode_paiement,
+              utilisateur_id, date_operation))
+
         conn.commit()
-        return True, f"Recu {numero}", numero
+
+        # 5) Message
+        if details:
+            lignes = "\n".join(
+                f"  - {d['categorie']} : {int(d['montant'])} "
+                f"(reste {int(d['nouveau_solde'])})"
+                for d in details
+            )
+            msg = (f"Recu {numero}\n\n"
+                   f"Affecte aux dettes : {int(affecte)} FCFA\n{lignes}")
+            if reste > 0:
+                msg += f"\n\nReste affecte a la scolarite : {int(reste)} FCFA"
+        else:
+            msg = f"Recu {numero}"
+
+        return True, msg, numero, details
+
     except Exception as e:
-        return False, f"Erreur : {str(e)}", None
+        conn.rollback()
+        return False, f"Erreur : {str(e)}", None, []
+    finally:
+        conn.close()
+
+
+def modifier_paiement_eleve(pid, montant=None, motif=None,
+                              mode_paiement=None, date_operation=None):
+    """
+    Modifie un paiement eleve existant.
+    Chaque parametre a None = pas de changement.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM paiements_eleves WHERE id = ?", (pid,))
+        row = cursor.fetchone()
+        if not row:
+            return False, "Paiement introuvable"
+
+        nouveau_montant = montant if montant is not None else row["montant"]
+        nouveau_motif = motif if motif is not None else row["motif"]
+        nouveau_mode = mode_paiement if mode_paiement is not None else row["mode_paiement"]
+        nouvelle_date = date_operation if date_operation else row["date_paiement"]
+
+        if nouveau_montant <= 0:
+            return False, "Le montant doit etre superieur a 0."
+
+        if len(nouvelle_date) == 10:
+            nouvelle_date = nouvelle_date + " " + datetime.now().strftime("%H:%M:%S")
+
+        cursor.execute("""
+            UPDATE paiements_eleves
+            SET montant = ?, motif = ?, mode_paiement = ?, date_paiement = ?
+            WHERE id = ?
+        """, (nouveau_montant, nouveau_motif, nouveau_mode, nouvelle_date, pid))
+
+        conn.commit()
+        return True, "Paiement modifie"
+    except Exception as e:
+        conn.rollback()
+        return False, f"Erreur : {str(e)}"
     finally:
         conn.close()
 
@@ -90,11 +290,13 @@ def supprimer_paiement_eleve(pid):
 
 # ============ PAIEMENTS PERSONNEL ============
 def ajouter_paiement_personnel(personnel_id, montant, motif, mode_paiement,
-                                utilisateur_id=None, montant_avance_deduit=0):
+                                utilisateur_id=None, montant_avance_deduit=0,
+                                date_operation=None):
     """
     Enregistre une paie.
     - montant : montant TOTAL du salaire (ex: $400)
     - montant_avance_deduit : montant d'avance a deduire (ex: $100)
+    - date_operation : 'AAAA-MM-JJ' ou 'AAAA-MM-JJ HH:MM:SS'
     Le net verse = montant - montant_avance_deduit
     """
     conn = get_connection()
@@ -112,18 +314,60 @@ def ajouter_paiement_personnel(personnel_id, montant, motif, mode_paiement,
         if montant_avance_deduit > montant:
             return False, "L'avance depasse le montant du salaire", None
 
+        if not date_operation:
+            date_operation = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        elif len(date_operation) == 10:
+            date_operation = date_operation + " " + datetime.now().strftime("%H:%M:%S")
+
         numero = generer_numero_paie()
         cursor.execute("""
             INSERT INTO paiements_personnel
                 (numero_paie, personnel_id, montant, motif, mode_paiement,
-                 utilisateur_id, montant_avance_deduit)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+                 utilisateur_id, montant_avance_deduit, date_paiement)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """, (numero, personnel_id, montant, motif.strip(), mode_paiement,
-              utilisateur_id, montant_avance_deduit))
+              utilisateur_id, montant_avance_deduit, date_operation))
         conn.commit()
         return True, f"Paie {numero}", numero
     except Exception as e:
         return False, f"Erreur : {str(e)}", None
+    finally:
+        conn.close()
+
+
+def modifier_paiement_personnel(pid, montant=None, motif=None,
+                                  mode_paiement=None, date_operation=None):
+    """Modifie une paie existante."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute("SELECT * FROM paiements_personnel WHERE id = ?", (pid,))
+        row = cursor.fetchone()
+        if not row:
+            return False, "Paie introuvable"
+
+        nouveau_montant = montant if montant is not None else row["montant"]
+        nouveau_motif = motif if motif is not None else row["motif"]
+        nouveau_mode = mode_paiement if mode_paiement is not None else row["mode_paiement"]
+        nouvelle_date = date_operation if date_operation else row["date_paiement"]
+
+        if nouveau_montant <= 0:
+            return False, "Le montant doit etre superieur a 0."
+
+        if len(nouvelle_date) == 10:
+            nouvelle_date = nouvelle_date + " " + datetime.now().strftime("%H:%M:%S")
+
+        cursor.execute("""
+            UPDATE paiements_personnel
+            SET montant = ?, motif = ?, mode_paiement = ?, date_paiement = ?
+            WHERE id = ?
+        """, (nouveau_montant, nouveau_motif, nouveau_mode, nouvelle_date, pid))
+
+        conn.commit()
+        return True, "Paie modifiee"
+    except Exception as e:
+        conn.rollback()
+        return False, f"Erreur : {str(e)}"
     finally:
         conn.close()
 
@@ -242,14 +486,18 @@ def total_caisse_personnel_mois():
 
 # ============ RECHERCHE RAPIDE ============
 def rechercher_eleve_par_matricule(matricule):
-    """Retourne un eleve + son solde"""
+    """Retourne un eleve + son solde scolarite + son total dettes."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
         SELECT e.*,
                COALESCE(e.frais_scolarite, 0) - COALESCE(
                    (SELECT SUM(montant) FROM paiements_eleves WHERE eleve_id = e.id), 0
-               ) as solde
+               ) as solde,
+               COALESCE(
+                   (SELECT SUM(solde) FROM dettes_eleves
+                    WHERE eleve_id = e.id AND statut = 'en_cours'), 0
+               ) as total_dettes
         FROM eleves e
         WHERE e.matricule = ? AND e.actif = 1
     """, (matricule.strip().upper(),))
@@ -284,7 +532,7 @@ def rechercher_personnel_par_code(code):
 
 
 def total_impayes_eleves():
-    """Total des soldes impayes de tous les eleves"""
+    """Total des soldes impayes (scolarite) + total dettes en cours."""
     conn = get_connection()
     cursor = conn.cursor()
     cursor.execute("""
