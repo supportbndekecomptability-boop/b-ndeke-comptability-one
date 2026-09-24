@@ -118,6 +118,7 @@ def init_database():
             libelle TEXT NOT NULL,
             montant REAL NOT NULL,
             categorie TEXT NOT NULL,
+            budget_sous_categorie TEXT DEFAULT '',
             date_depense TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             utilisateur_id INTEGER,
             FOREIGN KEY (utilisateur_id) REFERENCES utilisateurs(id)
@@ -149,7 +150,9 @@ def init_database():
         )
     """)
 
-    # ===== MIGRATIONS =====
+    # ============================================================
+    # MIGRATIONS (pour les bases existantes)
+    # ============================================================
 
     # Migration : eleves -> frais_scolarite
     cursor.execute("PRAGMA table_info(eleves)")
@@ -171,6 +174,13 @@ def init_database():
     if "montant_avance_deduit" not in colonnes_pp:
         cursor.execute("ALTER TABLE paiements_personnel ADD COLUMN montant_avance_deduit REAL DEFAULT 0")
         print("[MIGRATION] Colonne montant_avance_deduit ajoutee a paiements_personnel")
+
+    # Migration : depenses -> budget_sous_categorie  (NOUVELLE)
+    cursor.execute("PRAGMA table_info(depenses)")
+    colonnes_dep = [r[1] for r in cursor.fetchall()]
+    if "budget_sous_categorie" not in colonnes_dep:
+        cursor.execute("ALTER TABLE depenses ADD COLUMN budget_sous_categorie TEXT DEFAULT ''")
+        print("[MIGRATION] Colonne budget_sous_categorie ajoutee a depenses")
 
     conn.commit()
     conn.close()

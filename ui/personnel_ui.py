@@ -82,7 +82,7 @@ class PersonnelPage(ctk.CTkFrame):
             info_frame,
             text="Astuce : cliquez sur un code (souligne) pour le copier  |  "
                  "P = Payer  |  A = Avances  |  E = Editer avances  |  "
-                 "M = Modifier  |  X = Supprimer",
+                 "R = Releve de paie  |  M = Modifier  |  X = Supprimer",
             font=("Segoe UI", 11),
             text_color="#8B6914",
         ).pack(padx=15, pady=6, anchor="w")
@@ -133,7 +133,7 @@ class PersonnelPage(ctk.CTkFrame):
             text="Actions",
             font=("Segoe UI", 11, "bold"),
             text_color=COLOR_NAVY,
-            width=220,
+            width=265,
             anchor="center",
         ).pack(side="left", padx=4, pady=10)
 
@@ -217,8 +217,8 @@ class PersonnelPage(ctk.CTkFrame):
                     anchor="w",
                 ).pack(side="left", padx=4, pady=10)
 
-            # Actions : P, A, E, M, X
-            actions = ctk.CTkFrame(ligne, fg_color="transparent", width=220)
+            # Actions : P, A, E, R, M, X
+            actions = ctk.CTkFrame(ligne, fg_color="transparent", width=265)
             actions.pack(side="left", padx=4)
 
             ctk.CTkButton(
@@ -243,6 +243,14 @@ class PersonnelPage(ctk.CTkFrame):
                 width=36, height=28,
                 fg_color="#9b59b6", hover_color="#8e44ad",
                 command=lambda pp=p: self._editer_avances(pp),
+            ).pack(side="left", padx=2)
+
+            ctk.CTkButton(
+                actions, text="R",
+                font=("Segoe UI", 11, "bold"),
+                width=36, height=28,
+                fg_color="#e91e63", hover_color="#c2185b",
+                command=lambda pp=p: self._releve_paie(pp),
             ).pack(side="left", padx=2)
 
             ctk.CTkButton(
@@ -296,6 +304,21 @@ class PersonnelPage(ctk.CTkFrame):
             f"{p['nom']} {p['prenom']}",
             on_save=self.rafraichir_tableau,
         )
+
+    def _releve_paie(self, p):
+        """Ouvre le releve de paie imprimable"""
+        try:
+            from ui.releve_paie_ui import RelevePaieWindow
+            complet = get_personnel(p["id"])
+            RelevePaieWindow(self, complet)
+        except ImportError:
+            messagebox.showerror(
+                "Indisponible",
+                "Le module de releve de paie n'est pas encore installe.\n\n"
+                "Contactez B-NDEKE."
+            )
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur : {e}")
 
     def _ouvrir_paiement(self, p):
         try:

@@ -1,17 +1,21 @@
 """
 Interface de gestion des depenses
-Avec liaison aux sous-categories budgetaires.
+Avec liaison aux sous-categories budgetaires et creation a la volee.
 """
 import customtkinter as ctk
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 from config import COLOR_NAVY, COLOR_GOLD, format_montant, CURRENCY_SYMBOL
 from ui.scroll_frame import HorizontalScrollFrame
 from core.depenses import (
     ajouter_depense, lister_depenses, modifier_depense,
     supprimer_depense, get_depense, total_depenses,
-    total_depenses_jour, total_depenses_mois, CATEGORIES
+    total_depenses_jour, total_depenses_mois, CATEGORIES,
+    total_depenses_par_sous_categorie,
 )
-from core.budgets import liste_budgets, get_budgets
+from core.budgets import (
+    liste_budgets, get_budgets,
+    ajouter_sous_categorie,
+)
 
 
 class DepensesPage(ctk.CTkFrame):
@@ -98,10 +102,13 @@ class DepensesPage(ctk.CTkFrame):
         info_frame.pack(fill="x", pady=(0, 10))
         ctk.CTkLabel(
             info_frame,
-            text="Astuce : chaque depense peut etre liee a un budget "
-                 "(PRIME / INVESTISSEMENT / FONCTIONNEMENT) pour le suivi budgetaire.",
+            text="Astuce : liez chaque depense a une sous-categorie budget "
+                 "(ex: FONCTIONNEMENT > Papier et cahiers) pour suivre "
+                 "l'ecart prevu/reel. Le depassement est autorise mais signale.",
             font=("Segoe UI", 11),
             text_color="#8B6914",
+            wraplength=900,
+            justify="left",
         ).pack(padx=15, pady=6, anchor="w")
 
         self.label_compteur = ctk.CTkLabel(
@@ -171,7 +178,7 @@ class DepensesPage(ctk.CTkFrame):
 
             sous_cat = d.get("budget_sous_categorie", "") or ""
             if sous_cat:
-                couleur_budget = "#9b59b6"  # violet = lie au budget
+                couleur_budget = "#9b59b6"
                 texte_budget = sous_cat
             else:
                 couleur_budget = "#cccccc"
@@ -250,18 +257,19 @@ class FormulaireDepense(ctk.CTkToplevel):
         self.on_save = on_save
 
         self.sous_categories_par_budget = {}
+        self.budget_sous_cat_details = {}  # {nom_sous: {prevu, reel, ecart}}
 
         titre = "Modifier une depense" if depense else "Nouvelle depense"
         self.title(titre)
 
-        largeur = 540
-        hauteur = 700
+        largeur = 560
+        hauteur = min(800, self.winfo_screenheight() - 60)
         self.geometry(f"{largeur}x{hauteur}")
         self.configure(fg_color="#F5F7FB")
         self.resizable(False, False)
 
         x = (self.winfo_screenwidth() // 2) - (largeur // 2)
-        y = max(20, (self.winfo_screenheight() // 2) - (hauteur // 2))
+        y = max(10, (self.winfo_screenheight() // 2) - (hauteur // 2))
         self.geometry(f"{largeur}x{hauteur}+{x}+{y}")
 
         self.bind("<Escape>", lambda e: self.destroy())
@@ -280,15 +288,34 @@ class FormulaireDepense(ctk.CTkToplevel):
             pass
 
     def _charger_sous_categories(self):
-        """Charge les sous-categories de chaque budget."""
+        """Charge les sous-categories de chaque budget + leurs montants."""
+        self.sous_categories_par_budget = {}
+        self.budget_sous_cat_details = {}
         try:
+            from core.depenses import total_depenses_par_sous_categorie
             data = get_budgets()
+            par_sous = total_depenses_par_sous_categorie()
+
             for key, label, _ in liste_budgets():
-                sous = data.get(key, {}).get("sous_categories", {})
+                b = data.get(key, {})
+                sous_dict = b.get("sous_categories", {})
+
                 self.sous_categories_par_budget[key] = {
                     "label": label,
-                    "sous": list(sous.keys()),
+                    "sous": list(sous_dict.keys()),
                 }
+
+                # Details pour chaque sous-categorie (prevu / reel)
+                for nom, info in sous_dict.items():
+                    prevu = info.get("montant", 0)
+                    reel = par_sous.get(nom, 0)
+                    self.budget_sous_cat_details[nom] = {
+                        "budget": key,
+                        "budget_label": label,
+                        "prevu": prevu,
+                        "reel": reel,
+                        "ecart": prevu - reel,
+                    }
         except Exception as e:
             print(f"[DEPENSES] Erreur chargement sous-cat : {e}")
 
@@ -355,6 +382,7 @@ class FormulaireDepense(ctk.CTkToplevel):
         if self.depense:
             self.entree_montant.insert(0, str(int(self.depense["montant"])))
         self.entree_montant.pack(padx=10, pady=(0, 6), fill="x")
+        self.entree_montant.bind("<KeyRelease>", lambda e: self._maj_alerte())
 
         rapides = ctk.CTkFrame(zone, fg_color="transparent")
         rapides.pack(padx=10, pady=(0, 8), fill="x")
@@ -374,9 +402,16 @@ class FormulaireDepense(ctk.CTkToplevel):
         sep = ctk.CTkFrame(zone, fg_color="#e0e0e0", height=1)
         sep.pack(fill="x", padx=10, pady=(10, 6))
 
-        ctk.CTkLabel(zone, text="SUIVI BUDGETAIRE (optionnel)",
+        ctk.CTkLabel(zone, text="SUIVI BUDGETAIRE",
                      font=("Segoe UI", 10, "bold"),
                      text_color="#8e44ad", anchor="w").pack(padx=10, pady=(0, 4), fill="x")
+
+        ctk.CTkLabel(
+            zone,
+            text="Liez la depense a une sous-categorie pour suivre le budget.",
+            font=("Segoe UI", 9),
+            text_color="#999999",
+        ).pack(padx=10, pady=(0, 6), anchor="w", fill="x")
 
         # Menu 1 : Budget principal
         ctk.CTkLabel(zone, text="Budget principal",
@@ -400,27 +435,40 @@ class FormulaireDepense(ctk.CTkToplevel):
                      font=("Segoe UI", 11, "bold"),
                      text_color="#333333", anchor="w").pack(padx=10, pady=(4, 3), fill="x")
 
+        ligne_sous = ctk.CTkFrame(zone, fg_color="transparent")
+        ligne_sous.pack(padx=10, pady=(0, 6), fill="x")
+
         self.combo_sous = ctk.CTkComboBox(
-            zone,
+            ligne_sous,
             values=["(Choisir d'abord un budget)"],
             font=("Segoe UI", 11),
             height=36,
+            command=self._on_sous_change,
         )
         self.combo_sous.set("(Choisir d'abord un budget)")
-        self.combo_sous.pack(padx=10, pady=(0, 6), fill="x")
+        self.combo_sous.pack(side="left", fill="x", expand=True)
 
-        # Info
-        ctk.CTkLabel(
-            zone,
-            text=(
-                "Lier une depense a une sous-categorie permet de suivre "
-                "l'ecart entre le budget prevu et le reel depense."
-            ),
-            font=("Segoe UI", 9),
-            text_color="#999999",
-            wraplength=460,
+        ctk.CTkButton(
+            ligne_sous, text="+",
+            font=("Segoe UI", 14, "bold"),
+            fg_color="#8e44ad", hover_color="#7d3c98",
+            width=42, height=36,
+            command=self._creer_sous_categorie,
+        ).pack(side="left", padx=(5, 0))
+
+        # ===== ENCADRE INFO BUDGET =====
+        cadre_info = ctk.CTkFrame(zone, fg_color="#F0F7FF", corner_radius=8)
+        cadre_info.pack(fill="x", padx=10, pady=(5, 8))
+
+        self.label_budget_info = ctk.CTkLabel(
+            cadre_info,
+            text="Selectionnez un budget pour voir les montants.",
+            font=("Segoe UI", 10),
+            text_color="#666666",
             justify="left",
-        ).pack(padx=10, pady=(2, 10), fill="x")
+            anchor="w",
+        )
+        self.label_budget_info.pack(padx=12, pady=8, fill="x")
 
         # ===== PRE-SELECTION EN MODIFICATION =====
         if self.depense:
@@ -443,11 +491,13 @@ class FormulaireDepense(ctk.CTkToplevel):
                       fg_color=COLOR_NAVY, hover_color="#1a3d75",
                       height=42, command=self._enregistrer).pack(side="left", expand=True, fill="x", padx=(5, 0))
 
+    # =========================================================
     def _on_budget_change(self, valeur):
         """Met a jour la liste des sous-categories selon le budget choisi."""
         if valeur == "(Aucun)":
             self.combo_sous.configure(values=["(Choisir d'abord un budget)"])
             self.combo_sous.set("(Choisir d'abord un budget)")
+            self.label_budget_info.configure(text="Selectionnez un budget pour voir les montants.")
             return
 
         for key, info in self.sous_categories_par_budget.items():
@@ -455,10 +505,60 @@ class FormulaireDepense(ctk.CTkToplevel):
                 if info["sous"]:
                     self.combo_sous.configure(values=info["sous"])
                     self.combo_sous.set(info["sous"][0])
+                    self._on_sous_change(info["sous"][0])
                 else:
                     self.combo_sous.configure(values=["(Aucune sous-categorie)"])
                     self.combo_sous.set("(Aucune sous-categorie)")
+                    self.label_budget_info.configure(
+                        text="Aucune sous-categorie dans ce budget.\n"
+                             "Cliquez sur + pour en creer une."
+                    )
                 return
+
+    def _on_sous_change(self, valeur):
+        """Met a jour l'affichage du budget quand une sous-categorie est choisie."""
+        if valeur in ("(Choisir d'abord un budget)", "(Aucune sous-categorie)"):
+            return
+
+        details = self.budget_sous_cat_details.get(valeur)
+        if not details:
+            return
+
+        prevu = details["prevu"]
+        reel = details["reel"]
+        ecart = details["ecart"]
+
+        # Montant en cours de saisie
+        try:
+            m_str = self.entree_montant.get().strip().replace(" ", "").replace(",", "")
+            montant_saisi = float(m_str) if m_str else 0
+        except Exception:
+            montant_saisi = 0
+
+        # Apres ajout de cette depense
+        nouveau_reel = reel + montant_saisi
+        nouvel_ecart = prevu - nouveau_reel
+
+        couleur_ecart = "#27ae60" if nouvel_ecart >= 0 else "#e74c3c"
+        avertissement = ""
+        if nouvel_ecart < 0:
+            avertissement = "\nDEPASSEMENT DE BUDGET !"
+
+        texte = (
+            f"Budget : {details['budget_label']}  >  {valeur}\n"
+            f"Prevu     : {format_montant(prevu)}\n"
+            f"Deja dep. : {format_montant(reel)}\n"
+            f"Cette dep.: {format_montant(montant_saisi)}\n"
+            f"Reste     : {format_montant(nouvel_ecart)}{avertissement}"
+        )
+
+        self.label_budget_info.configure(text=texte, text_color=couleur_ecart)
+
+    def _maj_alerte(self):
+        """Recalculer l'alerte quand le montant change."""
+        sous = self.combo_sous.get().strip()
+        if sous not in ("(Choisir d'abord un budget)", "(Aucune sous-categorie)"):
+            self._on_sous_change(sous)
 
     def _selectionner_sous_categorie(self, sous_cat):
         """Pre-selectionne le budget + sous-cat en mode modification."""
@@ -467,7 +567,74 @@ class FormulaireDepense(ctk.CTkToplevel):
                 self.combo_budget.set(info["label"])
                 self.combo_sous.configure(values=info["sous"])
                 self.combo_sous.set(sous_cat)
+                self._on_sous_change(sous_cat)
                 return
+
+    def _creer_sous_categorie(self):
+        """Cree une nouvelle sous-categorie dans le budget selectionne."""
+        budget_label = self.combo_budget.get().strip()
+        if budget_label == "(Aucun)":
+            messagebox.showwarning(
+                "Attention",
+                "Choisissez d'abord un budget principal\n"
+                "(PRIME, INVESTISSEMENT ou FONCTIONNEMENT)."
+            )
+            return
+
+        # Trouver la cle du budget
+        budget_key = None
+        for key, info in self.sous_categories_par_budget.items():
+            if info["label"] == budget_label:
+                budget_key = key
+                break
+
+        if not budget_key:
+            messagebox.showerror("Erreur", "Budget introuvable.")
+            return
+
+        # Nom
+        nom = simpledialog.askstring(
+            "Nouvelle sous-categorie",
+            f"Nom de la nouvelle sous-categorie\n(dans {budget_label}) :",
+            parent=self,
+        )
+        if not nom or not nom.strip():
+            return
+
+        nom = nom.strip()
+
+        # Pourcentage
+        pct_str = simpledialog.askstring(
+            "Pourcentage",
+            f"Pourcentage de '{nom}'\n(par rapport au budget {budget_label}) :",
+            initialvalue="0",
+            parent=self,
+        )
+        try:
+            pct = float(pct_str) if pct_str else 0
+        except Exception:
+            pct = 0
+
+        # Creer
+        if ajouter_sous_categorie(budget_key, nom, pct):
+            messagebox.showinfo(
+                "Succes",
+                f"Sous-categorie '{nom}' creee dans {budget_label}.\n\n"
+                f"Elle est maintenant disponible partout\n"
+                f"(Parametres > Budgets, Suivi budgetaire, etc.)"
+            )
+            # Recharger
+            self._charger_sous_categories()
+            # Rafraichir les menus
+            budgets_labels = ["(Aucun)"] + [
+                b["label"] for b in self.sous_categories_par_budget.values()
+            ]
+            self.combo_budget.configure(values=budgets_labels)
+            self._on_budget_change(budget_label)
+            self.combo_sous.set(nom)
+            self._on_sous_change(nom)
+        else:
+            messagebox.showerror("Erreur", "Impossible de creer la sous-categorie.")
 
     def _ajouter_montant(self, m):
         actuel = self.entree_montant.get().strip()
@@ -477,6 +644,7 @@ class FormulaireDepense(ctk.CTkToplevel):
             v = 0
         self.entree_montant.delete(0, "end")
         self.entree_montant.insert(0, str(int(v + m)))
+        self._maj_alerte()
 
     def _enregistrer(self):
         categorie = self.combo_categorie.get().strip()
@@ -498,15 +666,39 @@ class FormulaireDepense(ctk.CTkToplevel):
             messagebox.showerror("Erreur", "Le montant doit etre superieur a 0.")
             return
 
-        # Recuperer la sous-categorie choisie
+        # Sous-categorie choisie
         budget = self.combo_budget.get().strip()
         sous_cat = self.combo_sous.get().strip()
 
         if budget == "(Aucun)" or sous_cat in ("(Choisir d'abord un budget)",
                                                  "(Aucune sous-categorie)"):
             sous_cat = ""
-        else:
-            sous_cat = sous_cat
+
+        # ===== VERIFICATION DEPASSEMENT =====
+        if sous_cat:
+            details = self.budget_sous_cat_details.get(sous_cat)
+            if details:
+                prevu = details["prevu"]
+                reel = details["reel"]
+
+                # Si on modifie, on retire l'ancien montant de cette depense
+                if self.depense and self.depense.get("budget_sous_categorie") == sous_cat:
+                    reel -= self.depense["montant"]
+
+                nouveau_reel = reel + montant
+                if nouveau_reel > prevu and prevu > 0:
+                    depassement = nouveau_reel - prevu
+                    rep = messagebox.askyesno(
+                        "Depassement de budget",
+                        f"Cette depense va depasser le budget prevu.\n\n"
+                        f"Sous-categorie : {sous_cat}\n"
+                        f"Prevu     : {format_montant(prevu)}\n"
+                        f"Apres dep.: {format_montant(nouveau_reel)}\n"
+                        f"Depassement : {format_montant(depassement)}\n\n"
+                        f"Voulez-vous continuer ?"
+                    )
+                    if not rep:
+                        return
 
         user_id = self.utilisateur["id"] if self.utilisateur else None
 
